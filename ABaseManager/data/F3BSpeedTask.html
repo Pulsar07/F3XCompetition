@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html>
+ <head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=0.5>
+  <meta http-equiv="cache-control" content="no-cache, must-revalidate, post-check=0, pre-check=0" />
+  <meta http-equiv="cache-control" content="max-age=0" />
+  <meta http-equiv="expires" content="0" />
+  <meta http-equiv="expires" content="Tue, 01 Jan 1980 1:00:00 GMT" />
+  <meta http-equiv="pragma" content="no-cache" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=0, minimum-scale=1.0, maximum-scale=1.0">
+  <link rel="icon" href="#" />
+  <link rel="stylesheet" href="./styles.css">
+  <script type="text/javascript" src="./script.js"></script>
+  <title>F3X-Competition</title>
+ </head>
+ <body onload="">
+  <div id="id_body">
+   <div class="container">
+    <div class="row">
+     <div class="col-appname">F3X-Competition:</div>
+     <div class="col-version">Server-Local-Time: <span id="id_time">0</span></div>
+     <div class="col-version">WiFi: <span id="id_wifi_rss">0</span>dB</div>
+     <div class="col-version">Bat (A/B): <span id="id_bat">0.00/0.00</span>V</div>
+     <div class="col-version">Radio (p/c/r/a): <span id="id_radio">_</span></div>
+     <!-- <div class="col-version">Round Trip: <span id="id_round_trip">0</span>ms</div> -->
+     <div class="col-version">Version: <span id="id_version">0.00</span></div>
+    </div>
+   </div>
+   <div class="container">
+    <h2>F3B-Speed:</h2>
+   </div>
+   <div class="container">
+    <div class="row">
+     <div class="col-declaration-long">
+      <label>Stop Task:</label>
+     </div>
+     <div class="col-button">
+      <button type="button" id="id_stop_task" name="stop_task" value="true" disabled
+      onclick="sendTimedNameValue(this.name, this.value); mySpeedTask.stop(this)">STOP Task</button>
+     </div>
+     <div class="col-text">
+      <p> stop a running task and reset all values</p>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-declaration-long">
+      <label>Speed Task State:</label>
+     </div>
+     <div class="col-button">
+      <label id="id_speed_task_state"> waiting for F3B Competition Server...</label> 
+      <label id="id_final_speed_time"></label>
+     </div>
+     <div class="col-text">
+      <p> task state description and final result after last line crossing</p>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-declaration-long">
+      <label>Speed Task Time:</label>
+     </div>
+     <div class="col-button">
+      <label id="id_speed_task_time"> --:-- </label>
+     </div>
+     <div class="col-text">
+      <p> speed task frame time (150s)</p>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-declaration-long">
+      <label>Speed Time:</label>
+     </div>
+     <div class="col-button">
+      <label id="id_running_speed_time"> --:-- </label>
+     </div>
+     <div class="col-text">
+      <p> running speed time, started after last A-Line crossing</p>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-declaration-long">
+      <label>Start Speed Task:</label>
+     </div>
+     <div class="col-button">
+      <button type="button" id="id_start_task" name="start_task" value="true"
+      onclick="sendNameValue(this.name, this.value); mySpeedTask.start(this)">START Task</button>
+     </div>
+     <div class="col-text">
+      <p> start speed task and set new frame time (150s)</p>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-declaration-long">
+      <label>Base-Line-A:</label>
+     </div>
+     <div class="col-button">
+      <button type="button" id="id_signal_a" name="signal_a" value="true"
+      onclick="sendTimedNameValue(this.name, this.value)">A-Line</button>
+     </div>
+     <div class="col-text">
+      <p> Base line A crossed </p>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-declaration-long">
+       <label>Base-Line-B:</label>
+     </div>
+     <div class="col-button">
+      <button type="button" id="id_signal_b" name="signal_b" value="true"
+      onclick="sendTimedNameValue(this.name, this.value)">B-Line</button>
+     </div>
+     <div class="col-text">
+      <p> base line B crossed </p>
+     </div>
+    </div>
+
+    <div class="row">
+     <div class="col-declaration-long">
+      <label>Reverse A-Line-Crossing:</label>
+     </div>
+     <div class="col-button">
+      <label id="id_speed_time_0"> --:-- </label>
+     </div>
+     <div class="col-text">
+      <p> Reverse A-Line crossing time, speed task not yet started</p>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-declaration-long">
+      <label>000m : A-Line-Crossing:</label>
+     </div>
+     <div class="col-button">
+      <label id="id_speed_time_1"> --:-- </label>
+     </div>
+     <div class="col-text">
+      <p> First A-Line crossing time, speed task started</p>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-declaration-long">
+      <label>150m : B-Line-Crossing:</label>
+     </div>
+     <div class="col-button">
+      <label id="id_speed_time_2"> --:-- </label>
+     </div>
+     <div class="col-text">
+      <p> 150m-turn-time/1.leg-time/1.leg-speed[/dead-time/dead-distance] </p>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-declaration-long">
+      <label>300m : A-Line-Crossing:</label>
+     </div>
+     <div class="col-button">
+      <label id="id_speed_time_3"> --:-- </label>
+     </div>
+     <div class="col-text">
+      <p> 300m-turn-time/2.leg-time/2.leg-speed[/dead-time/dead-distance] </p>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-declaration-long">
+      <label>450m : B-Line-Crossing:</label>
+     </div>
+     <div class="col-button">
+      <label id="id_speed_time_4"> --:-- </label>
+     </div>
+     <div class="col-text">
+      <p> 450m-turn-time/3.leg-time/3.leg-speed[/dead-time/dead-distance] </p>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-declaration-long">
+      <label>600m : A-Line-Crossing:</label>
+     </div>
+     <div class="col-button">
+      <label id="id_speed_time_5"> --:-- </label>
+     </div>
+     <div class="col-text">
+      <p> final 600m-turn-time/4.leg-time/4.leg-speed </p>
+     </div>
+    </div>
+   </div>
+   <hr>
+   <div class="container">
+      <button type="button" onclick="window.location.href='/'"> Main Menu</button>
+   </div>
+   <hr>
+   <div class="container">
+     <br><br><a href="https://github.com/Pulsar07/F3XCompetition">Link to project page at GitHub</a>
+   </div>
+  </div>
+  
+  <script>
+   getData("initF3BSpeedTask");
+   setInterval(function() {
+     // Call a function repetatively with 2 Second interval
+     getData("pollF3BSpeedTask");
+   }, 1000); // 500mSeconds update rate
+
+   setInterval(function() {
+     // Call a function repetatively with 2 Second interval
+     getDataInTaskstate("2", "id_running_speed_time");
+   }, 250); // 500mSeconds update rate
+
+   var ourSendTime = 0;
+   var ourDate = new Date();
+
+   function sendTimedNameValue(aName, aValue) {
+      console.log("sendTimedNameValue : " + aName + " : " + Date.now());
+      sendNameValue(aName, aValue);
+      getData("pollF3BSpeedTask");
+      // console.log(Date.now());
+   }
+  </script>
+ </body>
+</html>
