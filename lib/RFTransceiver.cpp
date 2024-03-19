@@ -12,26 +12,7 @@ RFTransceiver::RFTransceiver(const char* aName, uint8_t aCEPin, uint8_t aCSNPin)
 }
 
 
-void RFTransceiver::begin(uint8_t aNodeNum) {
-  byte address[][6]={"F3X-A", "F3X-B"};
-  
-  memcpy(&myAddress[0][0], &address[aNodeNum%2][0], 6);
-  memcpy(&myAddress[1][0], &address[(aNodeNum+1)%2][0], 6);
-
-  if (!myRadio->begin()) {
-    Logger::getInstance().log(INFO, F("radio hardware not responding!"));
-    delay(100);
-    while (1) {} // hold program in infinite loop to prevent subsequent errors
-  }
-  String printout = F("nRF24L01 – 2.4 GHz Radio initialized");
-  printout.concat( myRadio->isPVariant()?String(F("(+ Variant)")) : String(F("(normal Variant)")));
-  printout.concat( String(F("\nnRF24L01 – addresses: write:")) + String((char*) &myAddress[0][0]) + "/read:"+String((char*) &myAddress[1][0]));
-  Logger::getInstance().log(INFO, printout);
-
-  if (myRadio->isChipConnected()) {
-    Logger::getInstance().log(INFO, F("nRF24L01 – radio hardware is connected!"));
-  }
-
+void RFTransceiver::setDefaults() {
   /* Set the data rate:
    * RF24_250KBPS: 250 kbit per second
    * RF24_1MBPS:   1 megabit per second (default)
@@ -53,8 +34,6 @@ void RFTransceiver::begin(uint8_t aNodeNum) {
    */
   myRadio->setChannel(110);
 
-
- 
   // setRetries(delay, count) delay = 250us+delay*250us (5 default), count 0..15 (15 default)
   // delay:5 = 1500us = 1.5ms
   // count:15
@@ -83,9 +62,29 @@ void RFTransceiver::begin(uint8_t aNodeNum) {
   //  */
   // //myRadio->setPayloadSize(11);
   myRadio->enableDynamicPayloads();
+}
 
-  // myRadio->openWritingPipe(address); // set the address
-  // myRadio->stopListening(); // set as transmitter
+void RFTransceiver::begin(uint8_t aNodeNum) {
+  byte address[][6]={"F3X-A", "F3X-B"};
+  
+  memcpy(&myAddress[0][0], &address[aNodeNum%2][0], 6);
+  memcpy(&myAddress[1][0], &address[(aNodeNum+1)%2][0], 6);
+
+  if (!myRadio->begin()) {
+    Logger::getInstance().log(INFO, F("radio hardware not responding!"));
+    delay(100);
+    while (1) {} // hold program in infinite loop to prevent subsequent errors
+  }
+  String printout = F("nRF24L01 – 2.4 GHz Radio initialized");
+  printout.concat( myRadio->isPVariant()?String(F("(+ Variant)")) : String(F("(normal Variant)")));
+  printout.concat( String(F("\nnRF24L01 – addresses: write:")) + String((char*) &myAddress[0][0]) + "/read:"+String((char*) &myAddress[1][0]));
+  Logger::getInstance().log(INFO, printout);
+
+  if (myRadio->isChipConnected()) {
+    Logger::getInstance().log(INFO, F("nRF24L01 – radio hardware is connected!"));
+  }
+
+  setDefaults();
 
   myRadio->openReadingPipe(1, &myAddress[1][0]); // set the address
   myRadio->openWritingPipe(&myAddress[0][0]);
@@ -143,6 +142,24 @@ void RFTransceiver::setChannel(uint8_t aChannel) {
 
 uint8_t RFTransceiver::getPower() {
   return myRadio->getPALevel();
+}
+
+String RFTransceiver::getPowerStr() {
+  switch (myRadio->getPALevel()) {
+     case RF24_PA_MAX:
+      myStrBuffer = F("max");
+      break;
+    case RF24_PA_HIGH: 
+      myStrBuffer = F("high");
+      break;
+    case RF24_PA_LOW:
+      myStrBuffer = F("low");
+      break;
+    case RF24_PA_MIN:
+      myStrBuffer = F("min");
+      break;
+  }
+  return myStrBuffer;
 }
 
 void RFTransceiver::setPower(uint8_t aPower) {

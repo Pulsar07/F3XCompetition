@@ -81,14 +81,14 @@
         for (var i = 0; i < responseValues.length; i++) {
           var element = responseValues[i].split(MYPSEP_STR);
           var elementId = element[0];
-          console.log("response : " + elementId + " : " + Date.now());
+          // console.log("response : " + elementId + " : " + Date.now());
           // console.log("elementId:" + elementId);
           if (elementId == "") { break }
           var elementValue = element[1];
           if (elementId == "__speedtask__") { 
-            console.log("elementId:" + elementId);
+            // console.log("elementId:" + elementId);
             if ( mySpeedTask != null ){
-              console.log("speedtask.setState");
+              // console.log("speedtask.setState");
               mySpeedTask.setState(elementValue); 
             }
             break; 
@@ -96,7 +96,7 @@
           // console.log("elementValue:" + elementValue);
           var htmlElement = document.getElementById(elementId);
           if (htmlElement === null) {
-            console.error("in parseResponose: not element with given id found :" + elementId);
+            // console.error("in parseResponose: not element with given id found :" + elementId);
             continue;
           }
           // console.log("elementType:" + htmlElement.type);
@@ -129,7 +129,10 @@
               htmlElement.max = element[3];
             }
           } else if (htmlElement.type == "select-one") {
-            htmlElement.options.selectedIndex = elementValue;
+            // htmlElement.options.selectedIndex = elementValue;
+            htmlElement.value = elementValue;
+          } else if (htmlElement.type == "select") {
+            htmlElement.value = elementValue;
           } else {
             htmlElement.innerHTML = elementValue;
           }
@@ -190,7 +193,7 @@
       return this.state;
     }
     setState(aState) {
-    console.log("setState: " + aState);
+    // console.log("setState: " + aState);
       this.state = aState; 
       switch (this.state) {
         case "0": // TaskError,
@@ -212,21 +215,21 @@
       }
     }
     init() {
-      console.log("speedtask.init");
+      // console.log("speedtask.init");
       var htmlElement = document.getElementById("id_stop_task");
       htmlElement.disabled = true;
       htmlElement = document.getElementById("id_start_task");
       htmlElement.disabled = true;
     }
     start(element) {
-      console.log("speedtask.start");
+      // console.log("speedtask.start");
       var htmlElement = document.getElementById("id_stop_task");
       htmlElement.disabled = false;
       htmlElement = document.getElementById("id_start_task");
       htmlElement.disabled = true;
     }
     stop(element) {
-      console.log("speedtask.stop");
+      // console.log("speedtask.stop");
       var htmlElement = document.getElementById("id_stop_task");
       htmlElement.disabled = true;
       htmlElement = document.getElementById("id_start_task");

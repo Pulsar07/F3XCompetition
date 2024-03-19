@@ -1,9 +1,10 @@
 #include <EEPROM.h>
 #include <Bounce2.h>
 #include <Logger.h>
+#include "PinManager.h"
 #include "Config.h"
 
-#define APP_VERSION F("V022")
+#define APP_VERSION F("V028")
 
 static const char myName[] = "B-Line";
 
@@ -13,7 +14,7 @@ static const char myName[] = "B-Line";
 2 : Signalling Button B-Line
 3 : Feedback LED B-Line-Controller
 8 : 
-9 : RF24-NRF24L01 (CE brownwhite) / 433MHz HC-12 TX
+9 : RF24-NRF24L01 (CE brownwhite)
 10 : RF24-NRF24L01 (CSN brown)
 11 : RF24-NRF24L01 MOSI (blue)
 12 : RF24-NRF24L01 MISO (green-white)
@@ -33,16 +34,8 @@ A7 : Analog Battery in
 
 static configData_t ourConfig;
 
-#define USE_RF24
-#if defined USE_RF_433
-  #include <AltSoftSerial.h>
-  AltSoftSerial ourRadio;  // uses internally 9:TX, 8:RX
-#elif defined USE_RF24
-  #include <RFTransceiver.h>
-  // RFTransceiver ourRadio("Nano", 7, 8); // (CE, CSN)
-  RFTransceiver ourRadio(myName, PIN_RF24_CE, PIN_RF24_CSN); // (CE, CSN)
-  // USE_RF24 radio(D2, D1); // (CE, CSN)
-#endif
+#include <RFTransceiver.h>
+RFTransceiver ourRadio(myName, PIN_RF24_CE, PIN_RF24_CSN); // (CE, CSN)
     
 unsigned long ourSecond = 0;
 
@@ -52,18 +45,12 @@ unsigned long ourSecond = 0;
 F3XRemoteCommand ourRemoteCmd;
 unsigned long ourTimedReset = 0;
 uint16_t ourBatteryVoltage=0;
+uint16_t ourBatteryVoltageRaw=0;
 
 Bounce2::Button ourSignalButton = Bounce2::Button();
 
 void(* resetFunc) (void) = 0;  //declare reset function at address 0
 
-#ifdef USE_BUILTIN_LED
-// !!! conflicts with  RF24
-#define INTERNAL_LED_PIN 13    //  = LED_BUILTIN
-bool ourLedState = LOW;
-#endif
-
-// SET A VARIABLE TO STORE THE LED STATE
 uint8_t ourSignalBCounter=0;
 
 void saveConfig() {
@@ -110,14 +97,8 @@ void setupConfig() {
 }
 
 void setupRF() {
-  #if defined USE_RF_433
-    ourRadio.begin(9600);
-    logMsg(INFO, F("setup for RCTTransceiver/HC-12 successful "));   
-  #elif defined USE_RF24
-    ourRadio.begin(1);
-    logMsg(INFO, F("setup for RCTTransceiver/nRF24L01 successful "));   
-  #endif
-  // delay(300);
+  ourRadio.begin(1);
+  logMsg(INFO, F("setup for RCTTransceiver/nRF24L01 successful "));   
 }
 
 
@@ -129,38 +110,7 @@ void  setupBatteryIn() {
   pinMode(PIN_BATTERY_IN, INPUT);
 }
 
-static unsigned long ourLedTimeTill = 0;
-static boolean ourLedOn = false;
-
-void ledOn(uint16_t aDuration) {
-  if (ourLedOn) {
-    unsigned long dura = millis() + aDuration;
-    ourLedTimeTill = max(dura, ourLedTimeTill);
-  } else {
-    ourLedTimeTill = millis() + aDuration;
-  } 
-  ourLedOn = true;
-  digitalWrite(PIN_LED, HIGH);
-  // logMsg(INFO, F("ledOn duration/till: ")
-  //         + String(aDuration) + "/"
-  //         + String(ourLedTimeTill));
-}
-
-void setupLED() {
-  logMsg(INFO, F("setupLED"));
-  pinMode (PIN_LED, OUTPUT );
-  digitalWrite(PIN_LED, LOW);
-}
-
-void updateLED(unsigned long aNow) {
-  if (ourLedOn) {
-    if (aNow > ourLedTimeTill) {
-      // logMsg(INFO, F("led_off"));
-      ourLedOn = false;
-      digitalWrite(PIN_LED, LOW);
-    }
-  }
-}
+PinManager ourLED(PIN_LED);
 
 void updateBatteryIn(unsigned long aNow) {
   static unsigned long last = 0;
@@ -171,11 +121,11 @@ void updateBatteryIn(unsigned long aNow) {
 
   if (aNow > last) {
     last = aNow + BAT_IN_CYCLE;
-    uint16_t raw = analogRead(PIN_BATTERY_IN);
+    ourBatteryVoltageRaw = analogRead(PIN_BATTERY_IN);
     // Arduino Nano 5V can read 5V on analog in
-    ourBatteryVoltage=((float) raw)/1024.0*V_REF*ourConfig.batCalibration;
+    ourBatteryVoltage=((float) ourBatteryVoltageRaw)/1024.0*V_REF*ourConfig.batCalibration;
   
-    logMsg(INFO, String(F("battery voltage: ")) + String(ourBatteryVoltage) + String("/") + String(raw));
+    logMsg(INFO, String(F("battery voltage: ")) + String(ourBatteryVoltage) + String("/") + String(ourBatteryVoltageRaw));
   } 
 
 }
@@ -199,7 +149,6 @@ void setupLog(const char* aName) {
 }
 
 void setup() {
-
   // Open default serial to dump config to
   Serial.begin(115200);
   while (!Serial) delay(10); // wait for serial monitor
@@ -221,20 +170,13 @@ void setup() {
   setupBatteryIn();
   #endif
 
-  setupLED();
-
   setupRF();
   ourRemoteCmd.begin();
 
-
   setupSignallingButton();
-
-  // LED SETUP
-  #ifdef USE_BUILTIN_LED
-  pinMode(INTERNAL_LED_PIN,OUTPUT);
-  digitalWrite(INTERNAL_LED_PIN,ourLedState);
-  #endif
-
+  
+  // all ok
+  ourLED.pattern(7,100,100,100,100,100,100,100);
 }
 
 
@@ -246,13 +188,7 @@ void handleButtonEvents(unsigned long aNow) {
     
     logMsg(INFO, "sending SignalB");
     ourRadio.transmit(ourRemoteCmd.createCommand(F3XRemoteCommandType::SignalB, String(ourSignalBCounter))->c_str(), 5);
-    ledOn(400);
-
-    #ifdef USE_BUILTIN_LED
-    // TOGGLE THE LED STATE : 
-    ourLedState = !ourLedState; // SET ledState TO THE OPPOSITE OF ledState
-    digitalWrite(INTERNAL_LED_PIN,ourLedState);
-    #endif
+    ourLED.on(400);
   }
 }
 
@@ -309,7 +245,7 @@ void updateRadio(unsigned long aNow) {
         // String* arg = ourRemoteCmd.getArg();
         LOGGY(INFO, String("received BLineStateReq:"));
           boolean sendSuccess;
-          sendSuccess = ourRadio.transmit(*ourRemoteCmd.createCommand(F3XRemoteCommandType::BLineStateResp, String(ourBatteryVoltage)), 5);
+          sendSuccess = ourRadio.transmit(*ourRemoteCmd.createCommand(F3XRemoteCommandType::BLineStateResp, String(ourBatteryVoltageRaw)), 5);
           if (!sendSuccess) {
             logMsg(INFO, String(F("sending BLineStateResp not successsfull. Retransmissions: ")) + String(ourRadio.getRetransmissionCount()));
           }
@@ -332,7 +268,9 @@ void updateRadio(unsigned long aNow) {
     logMsg(INFO, String(F("radio datarate: ")) + String( ourRadio.getDataRate()));
     logMsg(INFO, String(F("radio ack: ")) + String( ourRadio.getAck()));
   }
+}
 
+void updateTimedEvents(unsigned long aNow) {
   if (ourTimedReset != 0 && aNow > ourTimedReset) {
      ourTimedReset = 0;
      resetFunc();
@@ -344,7 +282,8 @@ void loop() {
   handleButtonEvents(now);
   updateRadio(now);
   updateBatteryIn(now);
-  updateLED(now);
+  ourLED.update(now);
+  updateTimedEvents(now);
 
   static unsigned long next_sec = 0;
 
@@ -356,6 +295,6 @@ void loop() {
   }
   
   if (ourSecond%15 == 0) {
-    ledOn(100);
+    ourLED.on(100);
   }
 }

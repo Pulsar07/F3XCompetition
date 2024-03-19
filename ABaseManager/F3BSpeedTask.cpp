@@ -156,12 +156,12 @@ void F3BSpeedTask::signal(F3BSignalType aType) {
         mySignalTimeStamps[myCurrentSignal] = millis();
         mySignalACallback();
         break;
-      // case A_LINE_CROSSED_1: // in case of reflight
-      //   mySignalTimeStamps[A_LINE_REVERSED] = mySignalTimeStamps[A_LINE_CROSSED_1];
-      //   myCurrentSignal = A_LINE_CROSSED_1;
-      //   mySignalTimeStamps[myCurrentSignal] = millis();
-      //   mySignalACallback();
-      //   break;
+      case A_LINE_CROSSED_1: // in case of reflight
+        mySignalTimeStamps[A_LINE_REVERSED] = mySignalTimeStamps[A_LINE_CROSSED_1];
+        myCurrentSignal = A_LINE_CROSSED_1;
+        mySignalTimeStamps[myCurrentSignal] = millis();
+        mySignalACallback();
+        break;
       case B_LINE_CROSSED_1: // REGULAR : A line crossing second time, start of third leg
         myCurrentSignal = A_LINE_CROSSED_2;
         mySignalTimeStamps[myCurrentSignal] = millis();

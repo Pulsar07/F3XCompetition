@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+ <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+ <head>
+  <meta http-equiv="cache-control" content="no-cache, must-revalidate, post-check=0, pre-check=0" />
+  <meta http-equiv="cache-control" content="max-age=0" />
+  <meta http-equiv="expires" content="0" />
+  <meta http-equiv="expires" content="Tue, 01 Jan 1980 1:00:00 GMT" />
+  <meta http-equiv="pragma" content="no-cache" />
+  <link rel="icon" href="#" />
+  <link rel="stylesheet" href="./styles.css">
+  <script type="text/javascript" src="./script.js"></script>
+  <title>F3X-Competition-Tool</title>
+ </head>
+ <body onload="">
+  <div id="id_body">
+   <div class="container">
+    <div class="row">
+     <div class="col-appname">F3X-Competition-Tool:</div>
+     <div class="col-version">Server-Local-Time: <span id="id_time">0</span></div>
+     <div class="col-version">WiFi: <span id="id_wifi_rss">0</span>dB</div>
+     <div class="col-version">Bat (A/B): <span id="id_bat">0.00/0.00</span>V</div>
+     <div class="col-version">Radio (p/c/r/a:q/mp/rt): <span id="id_radio">_</span></div>
+     <div class="col-version">FW-Version: <span id="id_version">0.00</span></div>
+     <div class="col-version">Data-Version: <span>V110</span></div>
+    </div>
+   </div>
+   <div class="container">
+    <h2>Settings</h2>
+   </div>
+   <hr> <!-- ------------------------------------------------------------ -->
+   <div class="container">
+    <h3>WiFi - Settings</h3>
+    <p>Changes of the WiFi settings have to be saved and are only used at the next restart.</p>
+    <h4>WLAN access data to a existing 2.4GHz WLAN:</h4>
+    <p>WLAN state: <span id="id_online_status">---</span></p>
+    <div class="row">
+     <div class="col-setting-values">
+      <input type="text" id="id_wlanSsid" name="ssid"
+       maxlength="15"
+       onchange="sendNameAsciiValue(this.id, this.value)" placeholder="WLAN SSID">
+     </div>
+     <div class="col-setting-descr">
+      <label for="ssid">WLAN - SSID (max. 15 chars)</label>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-setting-values">
+      <input type="text" id="id_wlanPasswd" name="password"
+       maxlength="63"
+       onchange="sendNameAsciiValue(this.id, this.value)" placeholder="WLAN Passwort">
+     </div>
+     <div class="col-setting-descr">
+      <label for="password">WLAN - Password (max. 63 chars) </label>
+     </div>
+    </div>
+    <h4>WiFi Access Point (AP) / IP=192.168.4.1 : </h4>
+    <div class="row">
+     <div class="col-setting-values">
+      <input class="config" type="checkbox" id="id_wifiActive" name="id_wifiActive" value="xx"
+       onchange="sendNameValue(this.id, this.checked)" >
+     </div>
+     <div class="col-setting-descr">
+      <label for="id_wifiActive">activate WiFi at startup</label>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-setting-values">
+      <input type="text" id="id_apSsid" name="apssid"
+       maxlength="15"
+       onchange="sendNameAsciiValue(this.id, this.value)" placeholder="AccessPoint SSID">
+     </div>
+     <div class="col-setting-descr">
+      <label for="id_apSsid">AccessPoint - SSID (max. 15 chars)</label>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-setting-values">
+      <input type="text" id="id_apPasswd" name="id_apPasswd"
+       maxlength="63"
+       onchange="sendNameAsciiValue(this.id, this.value)" placeholder="AccessPoint Passwort">
+     </div>
+     <div class="col-setting-descr">
+      <label for="id_apPasswd">
+       Password of the AccessPoint (AP) (min. 8, max. 64 chars) </label>
+     </div>
+    </div>
+   </div>
+   <hr> <!-- ------------------------------------------------------------ -->
+   <div class="container">
+    <h3>A-Line <=> B-Line connection RF24 radio </h3>
+    <p>changes to the RF24 radio component.</p>
+    <h4>Radio link between A-Line and B-Line is using a separate 1MHz 2.4GHz channel:</h4>
+    <div class="row">
+     <div class="col-setting-values">
+      <input type="number" id="id_radio_channel" name="radio_channel" min="0" max="125" value="125">
+      <input type="button" onclick="sendSelectedValue('id_radio_channel')" value="Set">
+     </div>
+     <div class="col-setting-descr">
+      <label>Radio channel selection:</label>
+     </div>
+    </div>
+
+    <div class="row">
+     <div class="col-setting-values">
+       <select name="radio_power" id="id_radio_power">
+         <option value="min">Min</option>
+         <option value="low">Low</option>
+         <option value="high">High</option>
+         <option value="max">Max</option>
+       </select>
+       <input type="button" onclick="sendSelectedValue('id_radio_power')" value="Set">
+     </div>
+     <div class="col-setting-descr">
+      <label>Radio power selection:</label>
+     </div>
+    </div>
+   </div>
+   <hr> <!-- ------------------------------------------------------------ -->
+
+   <div class="container">
+    <div class="row">
+     <div class="col-setting-values">
+      <button type="button" id="id_reset" name="cmd_resetConfig" value="yes" onclick="sendNameValue(this.name, this.value)">
+       Set factory defaults</button>
+     </div>
+     <div class="col-setting-descr">
+      <label for="id_reset">
+       Reset all settings back to factory defaults. <br>!!!WLAN config data is deleted!!!<br>
+       Changes have to be saved, to make them persistent.
+      </label>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-setting-values">
+      <button type="button" id="id_save" name="cmd_saveConfig" value="yes" onclick="sendAll(); sendNameValue(this.name, this.value)">
+       Save</button>
+     </div>
+     <div class="col-setting-descr">
+      <label for="id_save">
+       Save the settings to EEPROM
+      </label>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-setting-values">
+      <button type="button" id="id_mcrestart" name="cmd_mcrestart" value="yes" onclick="sendNameValue(this.name, this.value)">
+       Restart Controller</button>
+     </div>
+     <div class="col-setting-descr">
+      <label for="id_mcrestart"> Restart the A-Line Manager and <br>the B-Line Manager (if connected)</label>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-setting-values">
+      <button type="button" id="id_fwupdate" name="cmd_fwupdate" value="yes" onclick="sendNameValue(this.name, this.value)">
+       Upload FW</button>
+     </div>
+     <div class="col-setting-descr">
+      <label for="id_fwupdate"> Update the firmware of the A-Line Manager. <br>Firmware is directly uploaded from: <br>http://f3b.so-fa.de/f3xtrainer/</label>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-setting-values">
+      <button type="button" id="id_fsupdate" name="cmd_fsupdate" value="yes" onclick="sendNameValue(this.name, this.value)">
+       Upload FS</button>
+     </div>
+     <div class="col-setting-descr">
+      <label for="id_fwupdate"> Update the filesystem of the A-Line Manager. <br>Filesystem directly uploaded from:<br>http://f3b.so-fa.de/f3xtrainer/</label>
+      <label for="id_fwupdate"> ! protocol data are replaced by an example file !</label>
+     </div>
+    </div>
+    <p>
+     All changes get immediately active and can be tested using the "Back"-Button. 
+     Exceptions are the WiFi data, which will get active only at the next restart
+    </p>
+    <hr>
+    <div class="row">
+     <div class="col-setting-values">
+      <button type="button" id="id_backToRoot" onclick="back()">Back</button>
+     </div>
+     <div class="col-setting-descr">
+      <label for="id_backToRoot"> back to the main menu, without saving </label>
+     </div>
+    </div>
+   </div>
+  <br><br><a href="https://github.com/Pulsar07/F3XCompetition">Link to project page at GitHub</a>
+  </div>
+  
+  <script>
+   function back() {
+     sendAll();
+     setTimeout(backToRoot, 200, );
+   }
+
+   function backToRoot() {
+     window.location.href='/';
+   }
+
+   function sendAll() {
+     sendValueForId("id_wlanSsid");
+     sendValueForId("id_wlanPasswd");
+     sendValueForId("id_apSsid");
+     sendValueForId("id_apPasswd");
+   }
+
+   getData(
+     "id_wlanSsid",
+     "id_apSsid",
+     "id_wifiActive",
+     "id_online_status",
+     "id_radio_channel",
+     "id_radio_power",
+     "initHeaderData"
+   );
+
+   setInterval(function() {
+     getData("id_online_status", "initHeaderData" );
+   }, 1500); // update rate in ms
+ 
+   function sendSelectedValue(aId) {
+     sendNameValue(
+       document.getElementById(aId).name,
+       document.getElementById(aId).value
+       );
+   }
+
+  </script>
+ </body>
+</html>

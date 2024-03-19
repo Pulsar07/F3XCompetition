@@ -1,5 +1,18 @@
+/**
+ * \file ABaseManager.ino
+ *
+ * \brief tool support trainings data measurement  
+ *
+ * \author Author: Rainer Stransky
+ *
+ * \copyright This project is released under the GNU Public License v3
+ *          see https://www.gnu.org/licenses/gpl.html.
+ * Contact: opensource@so-fa.de
+ *
+ */
+
 #include <EEPROM.h>
-#include <NTPClient.h>
+#include <limits.h>
 #include <ESP8266WiFi.h>
 // #define USE_MDNS
 #ifdef USE_MDNS
@@ -12,10 +25,32 @@
 #include <Encoder.h>
 
 #include "Logger.h"
+#include "PinManager.h"
 #include "LittleFS.h"
 #include "Config.h"
 #include "F3BSpeedTask.h"
 #include "settings.h"
+
+#define APP_VERSION "V028"
+
+/*
+Version History
+ V011 19.10.2023: RS : pre-version: test web interface enhanced, minor bugs solved, OTA implemented
+ V010 18.10.2023: RS : pre-version: initial version for F3B speed task and training data, with web interface only
+ V023 26.02.2024: RS : firmware update triggerd on ABaseManager via Einstellungen->3:Update Firmw.;
+ V024 08.03.2024: RS : pre version of RF24 channel and power setting via controller and OLED
+ V025 13.03.2024: RS : A-line controller with rotary encoder, settings in EEPROM via OLED and Web.
+ V026 13.03.2024: RS : Web-pages redesigned
+ V027 15.03.2024: RS : Buzzer refactored to PinManager-class to support beep sequences for battery low warning
+ V028 18.03.2024: RS : new speed start / back menu added
+*/
+
+/**
+Feature list:
+* Battery warning
+* ...
+*/
+
 static const char myName[] = "A-Base";
 static const char MYSEP_STR[] = "~~~";
 static const char CMDSEP_STR[] = ",";
@@ -27,8 +62,8 @@ D1 : OLED-SSD1306 SCL
 D2 : OLED-SSD1306 SDA 
 D3 : RF24-NRF24L01 CSN (brown) 
 D4 : Signalling Button A-Line
-D5 : RF24-NRF24L01 SCK (blue-white)  / 433MHz HC-12 TX
-D6 : RF24-NRF24L01 MISO (green-white) / 433MHz HC-12 RX
+D5 : RF24-NRF24L01 SCK (blue-white) 
+D6 : RF24-NRF24L01 MISO (green-white)
 D7 : RF24-NRF24L01 MOSI (blue)
 D8 : BUZZER / LED
 D9/RX  : KY-040 Encoder - DT 
@@ -68,12 +103,10 @@ RFTransceiver ourRadio(myName, PIN_RF24_CE, PIN_RF24_CSN); // (CE, CSN)
 Encoder ourRotaryEncoder(PIN_ENCODER_DT, PIN_ENCODER_CLK);
 #define RE_MULITPLIER_SLOW 1
 #define RE_MULITPLIER_NORMAL 5
-long ourRotaryEncoderPosition=0;
 long ourRotaryMenuPosition=0;
 uint8_t ourRotaryEncoderMultiplier;
 static boolean ourREState = true;
 static int8_t ourREInversion = 1;
-static long ourREPos = 0;
 static long ourREOldPos  = 0;
 
 
@@ -83,28 +116,54 @@ enum ToolContext {
   TC_F3XRadioChannel,
   TC_F3XRadioPower,
   TC_F3XInfo,
+  TC_F3XRadioInfo,
   TC_F3XOtaUpdate,
-  TC_F3XRangeTest,
+  TC_F3XMessage,
+  TC_F3BSpeedMenu,
   TC_F3BSpeedTask,
   TC_F3BDistanceTask,
   TC_F3BDurationTask,
   TC_F3FTask,
 };
 
+#define F3XCONTEXT_HISTORY_SIZE 5
 class F3XContext {
   public:
     F3XContext(ToolContext aContext) {
+      for (uint8_t i=0; i<F3XCONTEXT_HISTORY_SIZE; i++) {
+        myContextHistory[i] = TC_F3XBaseMenu;
+      }
       set(aContext);
     }
     void set(ToolContext aContext) {
       logMsg(LS_INTERNAL, String("set context:") + String(aContext));
-      myContext = aContext;
+      
+      for (uint8_t i=0; i<F3XCONTEXT_HISTORY_SIZE-1; i++) {
+        myContextHistory[i+1] = myContextHistory[i];
+      }
+      myContextHistory[0] = aContext;
+  
       myInfoString="";
       myInfoInt = 0;
       myInfoFloat = 0.0f;
+      myIsTaskRunning = false;
+    }
+    void back() {
+      for (uint8_t i=0; i<F3XCONTEXT_HISTORY_SIZE-1; i++) {
+        myContextHistory[i] = myContextHistory[i+1];
+      }
+      myContextHistory[F3XCONTEXT_HISTORY_SIZE-1] = TC_F3XBaseMenu;
+
+      logMsg(LS_INTERNAL, String("back context:") + String(get()));
+    }
+    void setTaskRunning(bool aArg) {
+      myIsTaskRunning = aArg;
+    }
+    bool getTaskRunning() {
+      return myIsTaskRunning;
     }
     ToolContext get() {
-      return myContext;
+      return myContextHistory[0];
     }
     String getInfoString() {
       return myInfoString;
@@ -125,38 +184,46 @@ class F3XContext {
       myInfoString = aArg;
     }
   private:
-    ToolContext myContext;
+    ToolContext myContextHistory[F3XCONTEXT_HISTORY_SIZE];
     float myInfoFloat;
     int myInfoInt;
     String myInfoString;
+    bool myIsTaskRunning;
 };
+
 F3XContext ourContext(TC_F3XInfo);
 
 // TC_F3XBaseMenu
-const char* ourF3XBaseMenuName = "Hauptmenu";
-const char* ourF3XBaseMenu0 = "0:F3B-Speedtask";
-const char* ourF3XBaseMenu1 = "1:F3F-Task";
-const char* ourF3XBaseMenu2 = "2:RangeTest";
-const char* ourF3XBaseMenu3 = "3:Einstellungen";
-const char* ourF3XBaseMenu4 = "4:Infos";
-const char* ourF3XBaseMenu5 = "5:Debug-Anzeige";
-const char* ourF3XBaseMenuItems[] = {ourF3XBaseMenu0, ourF3XBaseMenu1, ourF3XBaseMenu2, ourF3XBaseMenu3, ourF3XBaseMenu4, ourF3XBaseMenu5};
+const char* ourF3XBaseMenuName = "Main menu";
+const char* ourF3XBaseMenu0 = "0:F3B Speedtask";
+const char* ourF3XBaseMenu1 = "1:F3F Task";
+const char* ourF3XBaseMenu2 = "2:Info";
+const char* ourF3XBaseMenu3 = "3:Radio-Info";
+const char* ourF3XBaseMenu4 = "4:Settings";
+const char* ourF3XBaseMenuItems[] = {ourF3XBaseMenu0, ourF3XBaseMenu1, ourF3XBaseMenu2, ourF3XBaseMenu3, ourF3XBaseMenu4};
 const uint8_t ourF3XBaseMenuSize = sizeof(ourF3XBaseMenuItems) / sizeof(char*);;
 
 // TC_F3XSettingsMenu
-const char* ourSettingsMenuName = "Einstellungen";
-const char* ourSettingsMenu0 = "0:Buzzer an/aus";
-const char* ourSettingsMenu1 = "1:Funkkanal";
-const char* ourSettingsMenu2 = "2:Funk-Power";
-const char* ourSettingsMenu3 = "3:Anzeige drehen";
-const char* ourSettingsMenu4 = "4:Drehknopf invert.";
-const char* ourSettingsMenu5 = "5:Update Firmw.";
-const char* ourSettingsMenu6 = "6:Update Filesys.";
-const char* ourSettingsMenu7 = "7:Sichere Einstell.";
-const char* ourSettingsMenu8 = "8:Hauptmenu";
-const char* ourSettingsMenuItems[] = {ourSettingsMenu0, ourSettingsMenu1, ourSettingsMenu2, ourSettingsMenu3, ourSettingsMenu4, ourSettingsMenu5, ourSettingsMenu6, ourSettingsMenu7, ourSettingsMenu8};
-const uint8_t ourSettingsMenuSize = sizeof(ourSettingsMenuItems) / sizeof(char*);;
+const char* ourSettingsMenuName = "Settings";
+const char* ourSettingsMenu0 = "0:Buzzer on/off";
+const char* ourSettingsMenu1 = "1:Radio channel";
+const char* ourSettingsMenu2 = "2:Radio power";
+const char* ourSettingsMenu3 = "3:Display invert";
+const char* ourSettingsMenu4 = "4:Rotary button inv.";
+const char* ourSettingsMenu5 = "5:Update firmware";
+const char* ourSettingsMenu6 = "6:Update filesystem";
+const char* ourSettingsMenu7 = "7:WiFi on/off";
+const char* ourSettingsMenu8 = "8:Save settings";
+const char* ourSettingsMenu9 = "9:Main menu";
+const char* ourSettingsMenuItems[] = {ourSettingsMenu0, ourSettingsMenu1, ourSettingsMenu2, ourSettingsMenu3, ourSettingsMenu4, ourSettingsMenu5, ourSettingsMenu6, ourSettingsMenu7, ourSettingsMenu8, ourSettingsMenu9};
+const uint8_t ourSettingsMenuSize = sizeof(ourSettingsMenuItems) / sizeof(char*);
 
+// TC_F3BSpeedMenu
+const char* ourF3BSpeedMenuName = "F3B Speed";
+const char* ourF3BSpeedMenu0 = "0:Start Tasktime";
+const char* ourF3BSpeedMenu1 = "1:Back";
+const char* ourF3BSpeedMenuItems[] = {ourF3BSpeedMenu0, ourF3BSpeedMenu1};
+const uint8_t ourF3BSpeedMenuSize = sizeof(ourF3BSpeedMenuItems) / sizeof(char*);
 
 
 #include "F3XRemoteCommand.h"
@@ -187,21 +254,8 @@ U8G2_SSD1306_128X64_NONAME_1_HW_I2C ourOLED(U8G2_R0, U8X8_PIN_NONE, PIN_OLED_SCL
 #include <ArduinoOTA.h>
 #endif
  
-#define APP_VERSION "V025"
 
-/*
-Version History
- V0.1.1 19.10.2023: RS : pre-version: test web interface enhanced, minor bugs solved, OTA implemented
- V0.1.0 18.10.2023: RS : pre-version: initial version for F3B speed task and training data, with web interface only
- V0.2.3 26.02.2024: RS : firmware update triggerd on ABaseManager via Einstellungen->3:Update Firmw.;
-*/
-
-// #define NTPTIME
-#ifdef NTPTIME
-WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP);
-#endif
-IPAddress ourApIp(192,168,1,1);
+IPAddress ourApIp(192,168,4,1);
 IPAddress ourNetmask(255,255,255,0);
 ESP8266WebServer ourWebServer(80);
 unsigned long ourSecond = 0;
@@ -222,23 +276,32 @@ int8_t ourRadioChannel=-1;
 int8_t ourRadioDatarate=-1;
 boolean ourRadioAck=true;
 boolean ourRadioSendSettings=false;
-float ourRadioQuality=100.0f;
-boolean ourRangeTestActive=false;
+float ourRadioQuality=0.0f;
+uint16_t ourRadioStatePacketsMissed=0;
+uint16_t ourRadioSignalRoundTrip=0;
 boolean ourStartupPhase=true;
 F3XRemoteCommand ourRemoteCmd;
 uint16_t ourBatteryAVoltage;
 uint16_t ourBatteryBVoltage;
+uint16_t ourBatteryBVoltageRaw;
 unsigned long ourTimedReset = 0;
+unsigned long ourDialogTimer=0;
+String ourDialogString="";
 
 Bounce2::Button ourPushButton = Bounce2::Button();
+PinManager ourBuzzer(PIN_BUZZER_OUT);
 
 // =========== some function forward declarations ================
-void buzzOn(uint16_t); 
+
 char* getSpeedTimeString(unsigned long aTime, unsigned long aLegTime, uint16_t aLegSpeed,  unsigned long aDeadDelay, uint8_t aDeadDistance, char aSeparator='/', bool aForceDeadData=false);
 void updateOLED(unsigned long aNow, bool aForce);
 void updateOLED(unsigned long aNow);
 void resetRotaryEncoder(long aPos=0);
 uint8_t getModulo(long aDivident, uint8_t aDivisor);
+void forceOLED(uint8_t aLevel, String aMessage);
+void forceOLED(String aHead, String aMessage);
+void setDefaultConfig();
+void saveConfig();
 
 class F3BTaskData {
   private:
@@ -248,7 +311,6 @@ class F3BTaskData {
       ourProtocolFilePath = F("/F3BSpeedData.csv");
     }
     void init() {
-      // writeHeader();
     }
     void remove() {
       LittleFS.remove(ourProtocolFilePath.c_str());
@@ -335,21 +397,24 @@ class F3BTaskData {
 
 F3BTaskData ourF3BTaskData;
 
-void restartMCs(uint16_t aDelay) {
+void restartMCs(uint16_t aDelay, bool aRestartOnlyBLine=false) {
   ourRadio.transmit(ourRemoteCmd.createCommand(F3XRemoteCommandType::CmdRestartMC)->c_str(), 20);
-  ourTimedReset = millis() + aDelay;
+  if (!aRestartOnlyBLine) {
+    // force a restart of ourself
+    ourTimedReset = millis() + aDelay;
+  }
 }
 
 void reactonSignalA() {
+  ourBuzzer.on(500);
   logMsg(DEBUG, "reactonSignalA");
   if (ourSpeedTask.getTaskState() == TaskFinished) {
     ourF3BTaskData.writeData();
   }
-  buzzOn(500);
 }
 void reactonSignalB() {
+  ourBuzzer.on(500);
   logMsg(DEBUG, "reactonSignalB");
-  buzzOn(500);
 }
 
 /**
@@ -390,7 +455,7 @@ char* getSpeedTimeString(unsigned long aTime, unsigned long aLegTime, uint16_t a
     sprintf(&buffer[0],"%02d:%02d.%02d", minutes, seconds, centies);  // len=8
     if (aLegTime != F3B_TIME_NOT_SET) {
       if (aLegSpeed > 0) {
-        sprintf(&buffer[strlen(buffer)],"%c%02d.%02ds%c%dkmph", aSeparator, aLegTime / 1000, aLegTime/10%100, aSeparator, aLegSpeed ); // len=8+15=23
+        sprintf(&buffer[strlen(buffer)],"%c%02d.%02ds%c%dkm/h", aSeparator, aLegTime / 1000, aLegTime/10%100, aSeparator, aLegSpeed ); // len=8+15=23
       } else {
         sprintf(&buffer[strlen(buffer)],"%c%02d.%02ds", aSeparator, aLegTime / 1000, aLegTime/10%100); // len=8+7=15
       }
@@ -431,7 +496,7 @@ const uint8_t *oledFontSmall;
 const uint8_t *oledFontTiny;
 
 
-void setupDisplay() {
+void setupOLED() {
   ourOLED.begin();
   int oledDisplayHeight = ourOLED.getDisplayHeight(); 
   int oledDisplayWidth = ourOLED.getDisplayWidth(); 
@@ -441,37 +506,47 @@ void setupDisplay() {
   oledFontNormal = u8g2_font_helvR08_tr;
   oledFontSmall  = u8g2_font_5x7_tr;
   oledFontTiny   = u8g2_font_4x6_tr;
-
+  forceOLED(0, String(F("OLED ok")));
 }
 #endif
 
-void setupBuzzer() {
-  logMsg(DEBUG, F("setupBuzzer"));
-  pinMode (PIN_BUZZER_OUT, OUTPUT );
-  digitalWrite(PIN_BUZZER_OUT, LOW);  
-}
-
-void setupRF() {
+void setupRadio() {
   ourRadio.begin(0);  // set 0 for A-Line-Manager
   logMsg(INFO, F("setup for RCTTransceiver/nRF24L01 successful ")); 
+
+  // in the RFTransceiver implementation the default values for the radio settings are defined 
+  // for A- and B-Line Manager (Channel:110/Power:HIGH/Datarate:RF24_250KBPS/Ack:true)
+  // if the user is changing radio settings, they are save in the EEPROM config ourConfig/loadConfig/saveConfig
+  // at startup, these config value are NOT used, to provide in any case a commont radio setting for both sides.
+  // Only the A-Line-Manager, stores changed radio settings, boots with the default settings starts a communication with the 
+  // B-Line-Manager and sends changed settings via radio  
 
   ourRadioPower=ourRadio.getPower();
   ourRadioChannel=ourRadio.getChannel();
   ourRadioDatarate = ourRadio.getDataRate();
   ourRadioAck=ourRadio.getAck();
 
-  ourRadio.setPower(ourRadioPower);
-  ourRadio.setChannel(ourRadioChannel);
-  ourRadio.setDataRate(ourRadioDatarate);
-  ourRadio.setAck(ourRadioAck);
+  if (   ourRadioChannel != ourConfig.radioChannel
+      || ourRadioPower   != ourConfig.radioPower
+    ) {
+    ourRadioChannel = ourConfig.radioChannel;
+    ourRadioPower = ourConfig.radioPower;
+    // force a radio data  CmdSetRadio packets to B-Line
+    ourRadioSendSettings=true;
+  }
+  logMsg(LS_INTERNAL, F("RF24-cfg: (c/p)") + String(ourConfig.radioChannel) + String(F("/")) + String(ourConfig.radioPower)); 
+
+  forceOLED(0, ("RF24 radio started"));
 }
 
 
 void setupLittleFS() {
   if(!LittleFS.begin()){
     logMsg(DEBUG, F("LittleFS: An Error has occurred while mounting LittleFS"));
+    forceOLED(0, ("FS not ok"));
     return;
   }
+  forceOLED(0, ("FS ok"));
 }
 
 
@@ -479,9 +554,15 @@ void setupLittleFS() {
 void setupWiFi() {
   // first try to connect to the stored WLAN, if this does not work try to
   // start as Access Point
-  strncpy(ourConfig.wlanSsid , DEF_SSID, CONFIG_SSID_L);
-  // strncpy(ourConfig.wlanSsid , "", CONFIG_SSID_L);
-  strncpy(ourConfig.wlanPasswd, DEF_PSK, CONFIG_PASSW_L);
+  // strncpy(ourConfig.wlanSsid , DEF_SSID, CONFIG_SSID_L);
+  // strncpy(ourConfig.wlanPasswd, DEF_PSK, CONFIG_PASSW_L);
+  // strncpy(ourConfig.apPasswd, "12345678", CONFIG_PASSW_L) ;
+  if (!ourConfig.wifiIsActive) {
+    WiFi.mode(WIFI_OFF) ; // client mode only
+    forceOLED(0, (String("WiFi: inactive")));
+    delay(1500);
+    return;
+  }
 
   if (String(ourConfig.wlanSsid).length() != 0 ) {
     WiFi.persistent(false);
@@ -498,12 +579,15 @@ void setupWiFi() {
   if (WiFi.status() == WL_CONNECTED) {
     logMsg(INFO, F("success!"));
     logMsg(LS_INTERNAL, F("IP Address is: ") + WiFi.localIP().toString());
+    forceOLED(0, (String("WiFi: ") + WiFi.localIP().toString()));
   } else {
     logMsg(INFO, String(F("cannot connect to SSID :")) + ourConfig.wlanSsid);
     WiFi.mode(WIFI_AP) ; // client mode only
   }
   if (WiFi.status() != WL_CONNECTED) {
     logMsg(INFO, String(F("Starting WiFi Access Point with  SSID: ")) + ourConfig.apSsid);
+      forceOLED(0, String(("Start WiFi-AP: ") + String(ourConfig.apSsid)));
+      delay(1000);
     WiFi.softAPConfig(ourApIp, ourApIp, ourNetmask);    //Password length minimum 8 char
     boolean res = WiFi.softAP(ourConfig.apSsid, ourConfig.apPasswd, 3, 0, 1);    //Password length minimum 8 char, channel, hidden, #clients
     if(res ==true) {
@@ -511,6 +595,11 @@ void setupWiFi() {
       logMsg(INFO, F("AP setup done!"));
       logMsg(INFO, String(F("Host IP Address: ")) + myIP.toString());
       logMsg(INFO, String(F("Please connect to SSID: ")) + ourConfig.apSsid + String(F(", PW: ")) + ourConfig.apPasswd);
+      forceOLED(0, String(("WiFi IP: ") + myIP.toString()));
+      delay(1000);
+    } else {
+      forceOLED(0, String("WiFi: not started"));
+      delay(1000);
     }
   }
   #ifdef USE_MDNS
@@ -614,7 +703,7 @@ void setWebDataReq() {
   if (name == F("radio_channel")) {
     ourRadioChannel=value.toInt();
     ourRadioSendSettings=true;
-    logMsg(LOG_MOD_HTTP, INFO, F("set RF24 Channel:") + String(ourRadioChannel));
+    logMsg(LS_INTERNAL, F("set RF24 Channel:") + String(ourRadioChannel));
   } else 
   if (name == F("radio_datarate")) {
     if (value == F("250")) {
@@ -627,7 +716,7 @@ void setWebDataReq() {
       ourRadioDatarate = RF24_1MBPS;
     } 
     ourRadioSendSettings=true;
-    logMsg(LOG_MOD_HTTP, INFO, F("set RF24 DataRate: ") + String(ourRadioDatarate));
+    logMsg(LS_INTERNAL, F("set RF24 DataRate: ") + String(ourRadioDatarate));
   } else 
   if (name == F("radio_ack")) {
     if (value == F("true")) {
@@ -659,8 +748,54 @@ void setWebDataReq() {
   if (name == F("delete_f3b_data")) {
     logMsg(LS_INTERNAL, "remove F3BTaskData"); 
     ourF3BTaskData.remove();
+  } else 
+  if (name == F("cmd_fwupdate")) {
+    logMsg(LS_INTERNAL, "fw update"); 
+    otaUpdate(false); // firmware
+  } else 
+  if (name == F("cmd_fsupdate")) {
+    logMsg(LS_INTERNAL, "fs update"); 
+    otaUpdate(true); // filesystem
+  } else 
+  if (name == F("cmd_saveConfig")) {
+    logMsg(LS_INTERNAL, "save config"); 
+    saveConfig();
+  } else 
+  if (name == F("cmd_resetConfig")) {
+    logMsg(LS_INTERNAL, "reset config"); 
+    setDefaultConfig();
+  } else 
+  if (name == F("id_wifiActive")) {
+    if (value == "true") {
+      logMsg(LS_INTERNAL, F("setting wifi active")); 
+      ourConfig.wifiIsActive = true;
+    } else {
+      logMsg(LS_INTERNAL, F("setting wifi inactive")); 
+      ourConfig.wifiIsActive = false;
+    }
+  } else 
+  if (name == F("id_wlanSsid")) {
+    logMsg(LS_INTERNAL, "setting wlan ssid"); 
+    strncpy(ourConfig.wlanSsid, value.c_str(), CONFIG_SSID_L);
+  } else 
+  if (name == F("id_wlanPasswd")) {
+    logMsg(LS_INTERNAL, "setting wlan passwd"); 
+    strncpy(ourConfig.wlanPasswd, value.c_str(), CONFIG_PASSW_L);
+  } else 
+  if (name == F("id_apSsid")) {
+    logMsg(LS_INTERNAL, "setting ap password"); 
+    strncpy(ourConfig.apSsid, value.c_str(), CONFIG_SSID_L);
+  } else 
+  if (name == F("id_apPasswd")) {
+    logMsg(LS_INTERNAL, "setting ap password"); 
+    strncpy(ourConfig.apPasswd, value.c_str(), CONFIG_PASSW_L);
+
+  } else 
+  if (name == F("cmd_mcrestart")) {
+    logMsg(LS_INTERNAL, "restart MC"); 
+    restartMCs(1000);
   } else {
-    logMsg(ERROR, F("ERROR: unknown name : ") + name  + F(" in set request, value ") + value);
+    logMsg(LS_INTERNAL, F("ERROR: unknown name : ") + name  + F(" in set request, value ") + value);
   }
 
   if (sendResponse) {
@@ -669,8 +804,8 @@ void setWebDataReq() {
     #endif
     ourWebServer.send(htmlResponseCode, F("text/plane"), response); // send an valid answer
   }
-
 }
+
 
 void getWebHeaderData(String* aReturnString, boolean aForce=false) {
 
@@ -694,7 +829,8 @@ void getWebHeaderData(String* aReturnString, boolean aForce=false) {
     String(ourRadio.getPower()) + F("/") + 
     String(ourRadio.getChannel()) + F("/") + 
     String(ourRadio.getDataRate()) + F("/") + 
-    String(ourRadio.getAck());  
+    String(ourRadio.getAck()) + F(":") +
+    String(ourRadioQuality, 0) + F("/") + String(ourRadioStatePacketsMissed) + F("/") + String(ourRadioSignalRoundTrip)+String(F("ms"));  
 
   if (webRadio != currRadio || aForce) {
     webRadio = currRadio;
@@ -702,20 +838,6 @@ void getWebHeaderData(String* aReturnString, boolean aForce=false) {
     *aReturnString += String(F("id_radio=")) + webRadio + MYSEP_STR;
   }
 }
-
-void getF3XRangeTestWebData(String* aReturnString, boolean aForce=false) {
-  String taskstr;
-
-  taskstr = String(F("id_radio_roundtrip=")) 
-        + String(ourRadioRoundTripTime, 1) 
-        + String(F(" #[")) + String(ourRadioRoundtripIdx)+ String(F("]")) + MYSEP_STR;
-  *aReturnString += taskstr;
-
-  float missedPercent = 1.0f * ourRadioRoundTripMissed/ourRadioCycleSendCnt * 100;
-  *aReturnString += String(F("id_radio_missed_packets=")) + String(ourRadioRoundTripMissed) + F("/") + String(ourRadioCycleSendCnt) +F("/")+missedPercent+F("%") + MYSEP_STR;
-  *aReturnString += String(F("id_radio_packet_loss=")) + String(ourRadioPacketsLossPercent) + MYSEP_STR;
-}
-
 
 void getF3BSpeedWebData(String* aReturnString, boolean aForce=false) {
   String taskstr;
@@ -821,6 +943,11 @@ void getWebLogReq() {
     response += Logger::getInstance().getInternalMsg(i);
     response += "<br>\n";
   }
+  response+=F("<hr>\n");
+  response+=F("<button type=\"button\" id=\"id_backToRoot\" onclick=\"back()\">Back</button>\n");
+  response+=F("<script>\n");
+  response+=F("function back() { setTimeout(function() {window.location.href='/';}, 200, ); }");
+  response+=F("</script>\n");
   response+=F("</body>\n");
   ourWebServer.send(200, F("text/html"), response.c_str()); 
 }
@@ -861,11 +988,46 @@ void getWebDataReq() {
     #ifdef HTTP_LOG 
     logMsg(DEBUG, F("getWebDataReq: ") + argName); 
     #endif
+    if (argName.equals(F("id_version"))) {
+      response += argName + "=" + APP_VERSION + MYSEP_STR;
+    } else
+    // WiFi stuff
+    if (argName.equals(F("id_wlanSsid"))) {
+        response += argName + "=" + ourConfig.wlanSsid + MYSEP_STR;
+    } else
+    if (argName.equals(F("id_wlanPasswd"))) {
+        response += argName + "=" + "************" + MYSEP_STR;
+    } else
+    if (argName.equals(F("id_apSsid"))) {
+        response += argName + "=" + ourConfig.apSsid + MYSEP_STR;
+    } else
+    if (argName.equals(F("id_apPasswd"))) {
+      if (String(ourConfig.apPasswd).length() != 0) {
+        response += argName + "=" + "************" + MYSEP_STR;
+      }
+    } else
+    if (argName.equals("id_wifiActive")) {
+      if (ourConfig.wifiIsActive == true) {
+        response += argName + "=" + "checked" + MYSEP_STR;
+      }
+    } else
+    if (argName.equals(F("id_online_status"))) {
+      Serial.print("wifi status: ");
+      Serial.println(WiFi.status());
+      if (WiFi.status() == WL_CONNECTED) {
+        response += argName + "=online" + MYSEP_STR;
+      } else {
+        response += argName + "=offline" + MYSEP_STR;
+      }
+    } else
+    if (argName.equals(F("id_radio_channel"))) {
+        response += argName + "=" + String(ourRadio.getChannel()) + MYSEP_STR;
+    } else
+    if (argName.equals(F("id_radio_power"))) {
+        response += argName + "=" + ourRadio.getPowerStr() + MYSEP_STR;
+    } else
     if (argName.equals(F("initMainMenu"))) {
       ourContext.set(TC_F3XBaseMenu);
-      response += String(F("id_version=")) + APP_VERSION + MYSEP_STR;
-    } else
-    if (argName.equals(F("id_version"))) {
       response += String(F("id_version=")) + APP_VERSION + MYSEP_STR;
     } else
     if (argName.equals(F("initF3BSpeedTask"))) {
@@ -881,19 +1043,11 @@ void getWebDataReq() {
       getF3BSpeedWebData(&pushData, false);
       response += pushData;
     } else
-
-    if (argName.equals(F("initF3XRangeTest"))) {
-      ourContext.set(TC_F3XRangeTest);
+    if (argName.equals(F("initHeaderData"))) {
       response += String(F("id_version=")) + APP_VERSION + MYSEP_STR;
-      getWebHeaderData(&pushData, true);
-      getF3XRangeTestWebData(&pushData, true);
+      getWebHeaderData(&response, true);
       response += pushData;
     } else
-    if (argName.equals(F("pollF3XRangeTest"))) {
-      getWebHeaderData(&pushData, false);
-      getF3XRangeTestWebData(&pushData, false);
-      response += pushData;
-    } else 
     if (argName.equals(F("id_running_speed_time"))) {
       if (ourSpeedTask.getTaskState() == TaskRunning ) {
         String resp;
@@ -984,6 +1138,7 @@ void setupWebServer() {
   #ifdef USE_MDNS
   MDNS.addService("http", "tcp", 80);
   #endif
+  forceOLED(0, String("WebServer started"));
 }
 
 // End: WEBSERVER WEBSERVER WEBSERVER 
@@ -1005,6 +1160,8 @@ void setup_ota() {
   // ArduinoOTA.setPasswordHash("21232f297a57a5a743894a0e4a801fc3");
 
   ArduinoOTA.onStart([]() {
+    // first force a restart of the B-Line-Controller, to allow channel sync
+    restartMCs(0, true);
     String type;
     if (ArduinoOTA.getCommand() == U_FLASH) {
       type = F("sketch");
@@ -1041,6 +1198,7 @@ void setup_ota() {
   });
   ArduinoOTA.begin();
   logMsg(INFO, String(F("ArduinoOTA: setup ready")) + F("  IP address: ") + WiFi.localIP().toString());
+  forceOLED(0,  String("started ok"));
 }
 #endif
 
@@ -1091,12 +1249,6 @@ void otaUpdate(bool aFileSystemUpdate) {
   }
 }
 // End: OVER THE AIR
-
-#ifdef NTPTIME
-void setupNtp() {
-  timeClient.begin();
-}
-#endif
 
 void setupRemoteCmd() {
   ourRemoteCmd.begin();
@@ -1158,7 +1310,7 @@ void setupLog(const char* aName) {
 
 // config in EEPROM
 void saveConfig() {
-  logMsg(INFO, F("saving config to EEPROM "));
+  logMsg(LS_INTERNAL, F("saving config to EEPROM "));
   // Save configuration from RAM into EEPROM
   EEPROM.begin(512);
   EEPROM.put(0, ourConfig );
@@ -1173,11 +1325,13 @@ void setDefaultConfig() {
   strncpy(ourConfig.version , CONFIG_VERSION, CONFIG_VERSION_L);
   strncpy(ourConfig.wlanSsid, "", CONFIG_SSID_L);
   strncpy(ourConfig.wlanPasswd, "", CONFIG_PASSW_L);
-  strncpy(ourConfig.apSsid, "f3xt", CONFIG_SSID_L);
-  strncpy(ourConfig.apPasswd, "ondrom", CONFIG_PASSW_L) ;
+  strncpy(ourConfig.apSsid, "f3xct", CONFIG_SSID_L);
+  strncpy(ourConfig.apPasswd, "12345678", CONFIG_PASSW_L) ;
+  ourConfig.wifiIsActive = true;
   ourConfig.oledFlipped = false;
   ourConfig.rotaryEncoderFlipped = false;
-  saveConfig();
+  ourConfig.radioChannel = 110;
+  ourConfig.radioPower = RF24_PA_HIGH;
 }
 
 void loadConfig() {
@@ -1190,52 +1344,72 @@ void loadConfig() {
   // config was never written to EEPROM, so set the default config data and save it to EEPROM
   if ( String(CONFIG_VERSION) == ourConfig.version ) {
      // ok do nothing, this is the expected version
+    forceOLED(0, String("config ok"));
   } else if (String("XYZ_") == ourConfig.version ) {
      // ok do nothing, this is the expected version
-    logMsg(WARNING, String(F("old but compatible config version found: ")) + String(ourConfig.version));
+    logMsg(LS_INTERNAL, String(F("old but compatible config version found: ")) + String(ourConfig.version));
+    forceOLED(0, String("config ok"));
   } else {
-    logMsg(WARNING, String(F("unexpected config version found: ")) + String(ourConfig.version));
+    logMsg(LS_INTERNAL, String(F("unexpected config version found: ")) + String(ourConfig.version));
+    forceOLED(0, String("config reset"));
     setDefaultConfig();
+    saveConfig();
   }
 }
 
 void setupConfig() {
   loadConfig();
+  String cfg = F("Cfg: Radio(p/c):");
+  String pow;
+  switch(ourConfig.radioPower) {
+    case RF24_PA_MAX:
+      pow = F("MAX");
+      break;
+    case RF24_PA_HIGH:
+      pow = F("HIGH");
+      break;
+    case RF24_PA_LOW:
+      pow = F("LOW");
+      break;
+    case RF24_PA_MIN:
+      pow = F("MIN");
+      break;
+  }
+  cfg.concat(pow);
+  cfg.concat(String(F("/")));
+  cfg.concat(String(ourConfig.radioChannel));
+  forceOLED(0, cfg);
+  delay(2500);
+
 } 
 
 void setup() {
   setupLog(myName);
   setupSerial();
+  #ifdef OLED 
+  setupOLED();
+  #endif
   setupConfig();
-
-  // loadConfig();
-  // initConfig();
-  // printConfig("stored configuration:");
-
   setupLittleFS();
   setupWiFi();
   setupWebServer();
-  setupRF();
+  setupRadio();
   setupRemoteCmd();
   setupSpeedTask();
-  #ifdef OLED 
-  setupDisplay();
-  #endif
   #ifdef USE_BATTERY_IN_VOLTAGE
   setupBatteryIn();
   #endif
   setupSignallingButton();
 
   if (WiFi.status() == WL_CONNECTED) {
-    #ifdef NTPTIME
-    setupNtp();
-    #endif
     #ifdef OTA
     setup_ota();
     #endif
   }
-  setupBuzzer();
   delay(1000);
+  ourContext.set(TC_F3XBaseMenu);
+  ourContext.set(TC_F3XInfo);
+  resetRotaryEncoder(TC_F3XBaseMenu);
 }
 
 void updateRadio(unsigned long aNow) {
@@ -1244,13 +1418,11 @@ void updateRadio(unsigned long aNow) {
   #define CMD_CYCLE_REQUEST_DELAY 500
 
   static unsigned long lastBLineRequest = 0;
-  #define B_LINE_REQUEST_DELAY 10000
+  #define B_LINE_REQUEST_DELAY 3000
   
   static boolean isCmdCycleAnswerReceived = true;
   static uint8_t LastId = 255;
   uint8_t id=0;
-
-  // return; // RSRS
 
   // first try to read all data comming from radio peer
   while (ourRadio.available()) {          
@@ -1258,7 +1430,7 @@ void updateRadio(unsigned long aNow) {
   }
 
   
-  // if data builds a complete command handle it
+  // if data from remote side builds a complete command handle it
   if (ourRemoteCmd.available()) {
     String* arg = NULL;
 
@@ -1289,13 +1461,12 @@ void updateRadio(unsigned long aNow) {
            logMsg(LOG_MOD_RTEST, WARNING, String(F("!!!! wrong CycleTest answer: ")) + *arg); 
         }
         break;
-      case F3XRemoteCommandType::BLineStateResp:
-        ourBatteryBVoltage = ourRemoteCmd.getArg()->toInt();;
-        logMsg(INFO, String(F("Battery B voltage: ")) + String(ourBatteryBVoltage) + F("mV"));
-        break;
-      case F3XRemoteCommandType::ValBatB:
-        ourBatteryBVoltage = ourRemoteCmd.getArg()->toInt();;
-        logMsg(INFO, String(F("Battery B voltage: ")) + String(ourBatteryBVoltage) + F("mV"));
+      case F3XRemoteCommandType::BLineStateResp: {
+          ourBatteryBVoltageRaw = ourRemoteCmd.getArg()->toInt();;
+          float volt=(((float) ourBatteryBVoltageRaw)/1023.0)*5.0f*1000*1.012f;
+          ourBatteryBVoltage = volt;
+          logMsg(INFO, String(F("Battery B voltage: ")) + String(ourBatteryBVoltage) + F("mV"));
+        }
         break;
       default:
         logMsg(ERROR, F("unknow RTC data"));
@@ -1307,64 +1478,36 @@ void updateRadio(unsigned long aNow) {
   // sending a state request to the B-Line-Controller
   if (aNow > lastBLineRequest) {
     lastBLineRequest = aNow + B_LINE_REQUEST_DELAY;
+    unsigned long a = millis();
     boolean sendSuccess = ourRadio.transmit(
       ourRemoteCmd.createCommand(F3XRemoteCommandType::BLineStateReq, String(ourRadioRequestArg))->c_str(), 20);
 
+    uint16_t signalRoundTrip = millis() - a;
+
+    uint8_t lost=0;
     if (!sendSuccess) {
-      logMsg(LOG_MOD_RTEST, INFO, String(F("sending TestRequest NOT successsfull. Retransmissions: ")) 
-        + String(ourRadio.getRetransmissionCount()));
-      buzzOn(5);
+      logMsg(LS_INTERNAL, String(F("sending TestRequest NOT successsfull. Retransmissions: ")) 
+        + String(ourRadio.getRetransmissionCount()) + String(F("/")) + String(signalRoundTrip) + String(F("ms")));
+      ourBuzzer.on(PinManager::SHORT);
+      lost=100;
+      signalRoundTrip = UINT16_MAX;
+      ourBatteryBVoltage = 0;
+    } else {
+      logMsg(DEBUG, String(F("sending TestRequest successsfull. Retransmissions: ")) 
+        + String(ourRadio.getRetransmissionCount()) + String(F("/")) + String(signalRoundTrip) + String(F("ms")));
     }
 
     float quality = 100.0f - 100.0f * ourRadio.getRetransmissionCount()/20;
-    ourRadioQuality = quality + 0.75f * (ourRadioQuality - quality);
+    if (lost) {
+      quality=0.0f;
+      ourRadioStatePacketsMissed++;
+    }
+    ourRadioQuality = irr_low_pass_filter(ourRadioQuality, quality, 0.4f);
+    ourRadioSignalRoundTrip = irr_low_pass_filter(ourRadioSignalRoundTrip, signalRoundTrip, 0.4f);
     logMsg(LOG_MOD_RADIO, INFO, F("radio quality: ") + String(quality, 0) + F("%/") + String(ourRadioQuality,0) + F("%"));
   }
 
-  // sending cyclical data packets for range test 
-  if (ourContext.get() == TC_F3XRangeTest && ourRangeTestActive && aNow > lastCmdCycleTestRequest) {
-    lastCmdCycleTestRequest = aNow + CMD_CYCLE_REQUEST_DELAY;
-
-    
-    if (!isCmdCycleAnswerReceived) {
-      ourRadioRoundTripMissed++;
-      logMsg(LOG_MOD_RTEST, INFO, String(F("CmdCycleTestAnswer missing: ")) 
-          + String(F("-")) 
-          + String(F(" #[")) + String(ourRadioRoundtripIdx)+ String(F("]")));
-          buzzOn(40);
-    }
-
-    // Vario Filter
-    // IIR Low Pass Filter
-    // y[i] := α * x[i] + (1-α) * y[i-1]
-    //      := y[i-1] + α * (x[i] - y[i-1])
-    // mit α = 1- β 
-    // y[i] := (1-β) * x[i] + β * y[i-1]
-    //      := x[i] - β * x[i] + β * y[i-1]
-    //      := x[i] + β (y[i-1] - x[i])
-    // see: https://en.wikipedia.org/wiki/Low-pass_filter#Simple_infinite_impulse_response_filter
-    static float theQualitiy = 0;
-    float cycle = isCmdCycleAnswerReceived?1.0f:0.0f;
-    theQualitiy = cycle + 0.75f * (theQualitiy - cycle);
-    ourRadioPacketsLossPercent=100-theQualitiy*100;
-    logMsg(LOG_MOD_RTEST, INFO, F("remote packets loss: ") + String(ourRadioPacketsLossPercent) + String(F("/"))+ String(theQualitiy) + F("(")+String(cycle)+F(")"));
-
-    
-    ourRadioCycleSendCnt++;
-    ourRadioRequestArg = ourRadioCycleSendCnt%10;
-    boolean sendSuccess;
-    logMsg(LOG_MOD_RTEST, INFO, F("sending CmdCycleTestRequest:") + String(ourRadioRequestArg));
-    sendSuccess = ourRadio.transmit(ourRemoteCmd.createCommand(F3XRemoteCommandType::CmdCycleTestRequest, String(ourRadioRequestArg))->c_str(), 5);
-    if (!sendSuccess) {
-      logMsg(LOG_MOD_RTEST, INFO, String(F("sending TestRequest NOT successsfull. Retransmissions: ")) + String(ourRadio.getRetransmissionCount()));
-      buzzOn(30);
-    }
-    isCmdCycleAnswerReceived = false;
-    LOGGY3(LOG_MOD_RTEST, INFO, F("Radio retransmissions: ") + String(ourRadio.getRetransmissionCount()));
-    ourRadioRequestTime = millis();
-  }
-
-  if (ourContext.get() == TC_F3XRangeTest && ourRadioSendSettings) {
+  if (ourRadioSendSettings && ourRadioQuality > 99.0f) {
     static uint8_t power = -1;
     String settings;
     // power / channel / rate / ack
@@ -1374,11 +1517,17 @@ void updateRadio(unsigned long aNow) {
        + String(ourRadioDatarate) + CMDSEP_STR 
        + String(ourRadioAck);
     // 1,83,0,1;
+    
     if (ourRadio.transmit(ourRemoteCmd.createCommand(F3XRemoteCommandType::CmdSetRadio, settings)->c_str(), 20) ) {
+      // changed radio settings are successfully transmitted to B-Line, now the A-Line can also be switched
       ourRadio.setPower(ourRadioPower);
       ourRadio.setChannel(ourRadioChannel);
       ourRadio.setDataRate(ourRadioDatarate);
       ourRadio.setAck(ourRadioAck);
+
+      // set the new radio settings to the configuration data, which can be stored in the EEPROM later on
+      ourConfig.radioChannel = ourRadioChannel;
+      ourConfig.radioPower = ourRadioPower;
       LOGGY3(LOG_MOD_RTEST, INFO, F("send radio setting to remote and set local") + settings);
     } else {
       logMsg(LS_INTERNAL, ERROR, String(F("sending settings not possible: ") + settings));
@@ -1387,39 +1536,8 @@ void updateRadio(unsigned long aNow) {
   }
 }
 
-static unsigned long ourBuzzTimeTill = 0;
-static boolean ourBuzzOn = false;
-static boolean ourBuzzerEnabled = true;
-
-void buzzOn(uint16_t aDuration) {
-  #ifndef NOBUZZ
-  if (!ourBuzzerEnabled) {
-    return;         
-  }
-
-  if (ourBuzzOn) {
-    unsigned long dura = millis() + aDuration;
-    ourBuzzTimeTill = max(dura, ourBuzzTimeTill);
-  } else {
-    ourBuzzTimeTill = millis() + aDuration;
-  }
-  ourBuzzOn = true;
-  digitalWrite(PIN_BUZZER_OUT, HIGH);  
-   logMsg(INFO, F("buzzOn duration/till: ") 
-          + String(aDuration) + "/" 
-          + String(ourBuzzTimeTill));
-  #endif
-}
-
 void updateBuzzer(unsigned long aNow) {
-  if (ourBuzzOn) {
-    // digitalWrite(PIN_BUZZER_OUT, HIGH);  
-    if (aNow > ourBuzzTimeTill) {
-      logMsg(INFO, F("buzz_off"));
-      ourBuzzOn = false;
-      digitalWrite(PIN_BUZZER_OUT, LOW);  
-    }
-  }
+  ourBuzzer.update(aNow);
 }
 
 #ifdef OLED 
@@ -1498,32 +1616,79 @@ void showInfoPage() {
   ourOLED.setFont(oledFontLarge);
 
   ourOLED.setCursor(0, 12+4);
-  ourOLED.print(F("F3X Trainer"));
+  ourOLED.print(F("F3X Info"));
 
-  ourOLED.setCursor(5, 28);
+  ourOLED.setCursor(0, 28);
   ourOLED.setFont(oledFontNormal);
-  ourOLED.print(F("IP: "));
+  ourOLED.print(F("IP:"));
   String ip;
   ourOLED.print(getWiFiIp(&ip));
-  ourOLED.setCursor(5, 40);
-  ourOLED.print(F("Bat-A: "));
+  ourOLED.setCursor(0, 40);
+  ourOLED.print(F("Bat-A:"));
   ourOLED.print(String((((float) ourBatteryAVoltage/1000)), 2));
-  ourOLED.print(F("V /-B: "));
+  ourOLED.print(F("V/-B:"));
   ourOLED.print(String((((float) ourBatteryBVoltage/1000)), 2));
   ourOLED.print(F("V"));
-  ourOLED.setCursor(5, 52);
-  ourOLED.print(F("Radio (p/c/r/a):"));
+  ourOLED.setCursor(0, 52);
+  ourOLED.print(F("Radio (p/c/rt):"));
   String radio = 
   String(ourRadio.getPower()) + F("/") + 
   String(ourRadio.getChannel()) + F("/") + 
-  String(ourRadio.getDataRate()) + F("/") + 
-  String(ourRadio.getAck());  
+  String(ourRadioSignalRoundTrip);  
   ourOLED.print(radio);
 
   ourOLED.setFont(oledFontSmall);
   ourOLED.setCursor(0, 64);
   ourOLED.print(APP_VERSION);
   ourOLED.print(F(" (c)'23 R.Stransky"));
+}
+
+void showRadioInfoPage() {
+  ourOLED.setFont(oledFontLarge);
+
+  ourOLED.setCursor(0, 12+4);
+  ourOLED.print(F("F3X Radio Info"));
+
+  ourOLED.setCursor(5, 28);
+  ourOLED.setFont(oledFontNormal);
+  ourOLED.print(F("Quality:"));
+  ourOLED.print(String(ourRadioQuality, 0).c_str());
+  ourOLED.print(F(", mpkts:"));
+  ourOLED.print(String(ourRadioStatePacketsMissed).c_str());
+  ourOLED.setCursor(5, 40);
+  ourOLED.print(F("RoundTrip: "));
+  ourOLED.print((String(ourRadioSignalRoundTrip)+String(F("ms"))).c_str());
+  ourOLED.setCursor(5, 52);
+  ourOLED.print(F("Radio (p/c):"));
+  ourOLED.setCursor(5, 64);
+  String pow;
+  switch(ourRadio.getPower()) {
+      case RF24_PA_MAX:
+        pow = F("MAX");
+        break;
+      case RF24_PA_HIGH:
+        pow = F("HIGH");
+        break;
+      case RF24_PA_LOW:
+        pow = F("LOW");
+        break;
+      case RF24_PA_MIN:
+        pow = F("MIN");
+        break;
+    }
+  String radio = pow + F("/") + String(ourRadio.getChannel()) ;
+  ourOLED.print(radio);
+}
+
+void showMessagePage() {
+  ourOLED.setFont(oledFontLarge);
+
+  ourOLED.setCursor(0, 12+4);
+  ourOLED.print(F("F3X Message"));
+
+  ourOLED.setCursor(5, 28);
+  ourOLED.setFont(oledFontNormal);
+  ourOLED.print(ourContext.getInfoString());
 }
 
 void showUpdatePage() {
@@ -1554,20 +1719,32 @@ void showOLEDMenu(const char* aItems[], uint8_t aNumItems, const char* aName) {
   ourOLED.setDrawColor(1);
 }
 
+void showDialog(int aDuration, String aMessage) {
+  ourDialogTimer = millis() + aDuration;
+  ourDialogString = aMessage;
+}
+
+void showDialog() {
+  showMessage(F("Info"), ourDialogString);
+}
+
 void showError(int aError) {
+  showMessage(F("Error"), String(aError));
+}
+
+void showMessage(String aHead, String aMessage) {
   ourOLED.setFont(oledFontNormal);
-  ourOLED.drawStr(5,12, String(F("Error")).c_str());
+  ourOLED.drawStr(5,12, aHead.c_str());
 
   ourOLED.setFont(oledFontBig);
-  ourOLED.drawStr(0,41, String(aError).c_str());
+  if (aMessage.length() > 15) {
+    ourOLED.setFont(oledFontNormal);
+  }
+  ourOLED.drawStr(0,41, aMessage.c_str());
 }
 
 void showNotYetImplemented() {
-  ourOLED.setFont(oledFontNormal);
-  ourOLED.setCursor(0, 12);
-  ourOLED.print(F("ERROR"));
-  ourOLED.setCursor(10, 30);
-  ourOLED.print(F("not yet implemented"));
+  showMessage(F("Error"), F("not yet implemented"));
 }
 
 void showF3BSpeedTask() {
@@ -1593,16 +1770,16 @@ void showF3BSpeedTask() {
         }
         switch (ourSpeedTask.getCurrentSignal()) {
           case NOT_STARTED:
-            info=F("P:A-Line Ueberflug");
+            info=F("P:A-Line rev Cross");
             break;
           case A_LINE_REVERSED:
-            info=F("P:Einflug Speed");
+            info=F("P:Enter 1.leg");
             break;
           case B_LINE_CROSSED_1:
-            info=F("P:Wende 2");
+            info=F("P:2. turn");
             break;
           case B_LINE_CROSSED_2:
-            info=F("P:Zielueberflug");
+            info=F("P:target cross");
             break;
           default:
             info=F("P:---");
@@ -1615,7 +1792,7 @@ void showF3BSpeedTask() {
         break;
       case TaskWaiting:
         taskState='W';
-        info=F("P:Start Rahmenzeit");
+        info=F("P:Start Tasktime");
         break;
       case TaskTimeOverflow:
         taskState='O';
@@ -1681,22 +1858,6 @@ void showF3BSpeedTask() {
   }
 }
 
-void showRangeTest() {
-  ourOLED.setFont(oledFontNormal);
-  ourOLED.setCursor(0, 12);
-  ourOLED.print(F("PacketLoss:"));
-  ourOLED.setFont(oledFontBig);
-  ourOLED.print(ourRadioPacketsLossPercent);
-  ourOLED.print(F("%"));
-
-  ourOLED.setFont(oledFontNormal);
-  ourOLED.setCursor(0, 30);
-  ourOLED.print(F("Packet Roundtrip:"));
-  ourOLED.setFont(oledFontBig);
-  ourOLED.print(ourRadioRoundTripTime, 1);
-  ourOLED.print(F("ms"));
-}
-
 void updateOLED(unsigned long aNow) {
   updateOLED(aNow, false);
 }
@@ -1714,40 +1875,73 @@ void updateOLED(unsigned long aNow, bool aForce) {
   
   ourOLED.firstPage();
   do {
-    switch(ourContext.get()) {
-      case TC_F3BSpeedTask:
-        showF3BSpeedTask();
-        break;
-      case TC_F3FTask:
-        showNotYetImplemented();
-        break;
-      case TC_F3XRangeTest:
-        showRangeTest();
-        break;
-      case TC_F3XOtaUpdate:
-        showUpdatePage();
-        break;
-      case TC_F3XRadioChannel:
-        showRadioChannelPage();
-        break;
-      case TC_F3XRadioPower:
-        showRadioPowerPage();
-        break;
-      case TC_F3XInfo:
-        showInfoPage();
-        break;
-      case TC_F3XBaseMenu:
-        showOLEDMenu(ourF3XBaseMenuItems, ourF3XBaseMenuSize, ourF3XBaseMenuName);
-        break;
-      case TC_F3XSettingsMenu: 
-        showOLEDMenu(ourSettingsMenuItems, ourSettingsMenuSize, ourSettingsMenuName);
-        break;
-      default:
-        showError(ourContext.get());
-        break;
+    if (ourDialogTimer > aNow) {
+      showDialog();
+    } else {
+      switch(ourContext.get()) {
+        case TC_F3BSpeedTask:
+          showF3BSpeedTask();
+          break;
+        case TC_F3FTask:
+          showNotYetImplemented();
+          break;
+        case TC_F3XOtaUpdate:
+          showUpdatePage();
+          break;
+        case TC_F3XMessage:
+          showMessagePage();
+          break;
+        case TC_F3XRadioChannel:
+          showRadioChannelPage();
+          break;
+        case TC_F3XRadioPower:
+          showRadioPowerPage();
+          break;
+        case TC_F3XInfo:
+          showInfoPage();
+          break;
+        case TC_F3XRadioInfo:
+          showRadioInfoPage();
+          break;
+        case TC_F3XBaseMenu:
+          showOLEDMenu(ourF3XBaseMenuItems, ourF3XBaseMenuSize, ourF3XBaseMenuName);
+          break;
+        case TC_F3BSpeedMenu: 
+          showOLEDMenu(ourF3BSpeedMenuItems, ourF3BSpeedMenuSize, ourF3BSpeedMenuName);
+          break;
+        case TC_F3XSettingsMenu: 
+          showOLEDMenu(ourSettingsMenuItems, ourSettingsMenuSize, ourSettingsMenuName);
+          break;
+        default:
+          showError(ourContext.get());
+          break;
+      }
     }
   } while ( ourOLED.nextPage() );
 }
+
+
+void forceOLED(uint8_t aLevel, String aMessage) {
+  String head;
+  switch (aLevel) {
+    case 0:
+      forceOLED(String(F("F3X Comp. boot: ")), aMessage);
+      break;
+    default:
+      forceOLED(String(aLevel), aMessage);
+      break;
+  }
+  delay(100);
+}
+
+void forceOLED(String aHead, String aMessage) {
+  logMsg(LS_INTERNAL, aHead+aMessage);
+  ourOLED.firstPage();
+  do {
+    showMessage(aHead, aMessage);
+  } while ( ourOLED.nextPage() );
+}
+#endif // OLED
 
 #ifdef USE_BATTERY_IN_VOLTAGE
 // primary battery voltage handling (LiIon Accu of battery shield)
@@ -1756,7 +1950,7 @@ void  setupBatteryIn() {
   pinMode(PIN_BATTERY_IN, INPUT);
 }     
 
-void updateBatteryIn(unsigned long aNow) {
+void updateBatterySupervision(unsigned long aNow) {
   static unsigned long next = 0;
   #define BAT_IN_CYCLE 10000
   #
@@ -1772,16 +1966,26 @@ void updateBatteryIn(unsigned long aNow) {
     uint16_t raw = analogRead(PIN_BATTERY_IN);
     // Wemos D1  can read 3.2V on analog in
     // 3V3 = 3290mV
-    float volt=((float) raw)/1024.0*V_REF;
-    ourBatteryAVoltage = volt;
-    logMsg(INFO, String(F("battery A voltage: ")) + String(volt, 2) + F(" | sensor-value: ") + String(raw));
-    // logMsg(INFO, String(F("Battery A voltage: ")) + String(ourBatteryAVoltage) + F("mV"));
-  }
+    float volt=(((float) raw)/1023.0)*4.12f;
+    ourBatteryAVoltage = volt*1000;  // convert to milli volt
+    logMsg(INFO, String(F("battery A voltage: ")) + String(volt, 2) + F("V | sensor-value: ") + String(raw));
 
+
+    bool battWarn = false;
+    // check battery level and warn if low
+    #define BAT_WARN_LEVEL 3200 // mV
+    if(ourBatteryBVoltage > 500 && ourBatteryBVoltage < BAT_WARN_LEVEL) {
+      battWarn = true;
+    }
+    if(ourBatteryAVoltage > 500 && ourBatteryAVoltage < BAT_WARN_LEVEL) {
+      battWarn = true;
+    }
+    if (battWarn) {
+      ourBuzzer.pattern(5,100,30,100,30,200);
+    }
+  }
 }
 #endif
-
-
 
 void perfCheck(void (*aExecute)(unsigned long), const char* aDescription, unsigned long aNow) {
   #ifdef PERF_DEBUG
@@ -1795,7 +1999,6 @@ void perfCheck(void (*aExecute)(unsigned long), const char* aDescription, unsign
   #endif
 }
 
-#endif
 void updateSpeedTask(unsigned long aNow) {
  ourSpeedTask.update();
 }
@@ -1812,7 +2015,7 @@ void updatePushButton(unsigned long aNow) {
   static uint8_t buttonPressedCnt=0;
   
   #define CLEAR_HISTORY history[0] = 0L
-  #define MULTI_PRESSED_FINISHED CLEAR_HISTORY; reactOnMultiplePressed=0
+  #define MULTI_PRESSED_FINISHED CLEAR_HISTORY; reactOnMultiplePressed=0;buttonPressedCnt=0
   #define MULTI_PRESS_TIMERANGE 1500
   #define MULTI_PRESS_REACTION_TIME 700
 
@@ -1839,8 +2042,6 @@ void updatePushButton(unsigned long aNow) {
     // handling for long time pressed button and not released 
   }
 
-  static ToolContext backContext=TC_F3XBaseMenu;
-
   if (wasPressed) {
     // HIGH Prio Button Events:
     //  here the button press is handled for all cases NOT multi press state is needed
@@ -1849,14 +2050,22 @@ void updatePushButton(unsigned long aNow) {
     switch(ourContext.get()) {
       case TC_F3BSpeedTask:
         logMsg(INFO, F("button F3BSpeedTask"));
+        reactOnMultiplePressed = history[buttonPressedCnt-1] + MULTI_PRESS_REACTION_TIME;
         switch(ourSpeedTask.getTaskState()) {
           case TaskWaiting:
             ourSpeedTask.start();
+            ourContext.setTaskRunning(true);
+            ourBuzzer.on(PinManager::SHORT); 
             break;
           case TaskFinished:
           case TaskTimeOverflow:
-            reactOnMultiplePressed = history[buttonPressedCnt-1] + MULTI_PRESS_REACTION_TIME;
-            logMsg(INFO, F("one click mulit: ") + String(reactOnMultiplePressed) + "/" + String(buttonPressedCnt));
+            ourContext.setTaskRunning(false);
+            ourSpeedTask.stop();
+            logMsg(INFO, F("resetting task: F3BSpeedMenu"));
+            resetRotaryEncoder();
+            ourContext.set(TC_F3BSpeedMenu);
+            CLEAR_HISTORY;
+            MULTI_PRESSED_FINISHED;
             break;
           case TaskRunning:
             ourSpeedTask.signal(SignalA);
@@ -1865,28 +2074,25 @@ void updatePushButton(unsigned long aNow) {
             break;
         }
         break;
-      case TC_F3XRangeTest:
-        ourRangeTestActive = !ourRangeTestActive;
-        logMsg(INFO, F("toggle range test state to: ") + String(ourRangeTestActive));
-        break;
-      case TC_F3FTask:
-      case TC_F3XOtaUpdate:
-      case TC_F3XInfo: // button press in info context
+      case TC_F3FTask: // button press
+      case TC_F3XOtaUpdate: // button press
+      case TC_F3XMessage: // button press
+      case TC_F3XInfo: // button press
+      case TC_F3XRadioInfo: // button press
         logMsg(DEBUG, F("HW button in: ") + String(ourContext.get()));
-        ourContext.set(TC_F3XBaseMenu);
-        resetRotaryEncoder();
+        ourBuzzer.on(PinManager::SHORT); 
+        ourContext.back();
         CLEAR_HISTORY;
         break;
       case TC_F3XRadioPower: // button press in radio power context
-        // NYI
+        ourRadioSendSettings=true;
+        logMsg(LS_INTERNAL, INFO, F("set RF24 Power:") + String(ourRadioPower));
         ourContext.set(TC_F3XSettingsMenu);
         resetRotaryEncoder((long) TC_F3XRadioPower);
         CLEAR_HISTORY;
       case TC_F3XRadioChannel: // button press in radio channel context
-        // ourRadioSendSettings=true;
-        // ourRadio.setChannel(ourRadioChannel);
-        // ourRadio.setPower(ourRadioPower);
-        // logMsg(LOG_MOD_HTTP, INFO, F("set RF24 Channel:") + String(ourRadioChannel));
+        ourRadioSendSettings=true;
+        logMsg(LS_INTERNAL, INFO, F("set RF24 Channel:") + String(ourRadioChannel));
         // NYI
         ourContext.set(TC_F3XSettingsMenu);
         resetRotaryEncoder((long) TC_F3XRadioChannel);
@@ -1897,41 +2103,55 @@ void updatePushButton(unsigned long aNow) {
         logMsg(DEBUG, String(F("HW button pressed in F3XBaseMenu -> setting menu context: ")) + String(menuPos));
         switch (menuPos) {  // !! use the right size here !!
             case 0: // "0:F3B-Speedtask";
-              buzzOn(1); 
-              backContext=ourContext.get();
-              logMsg(INFO, F("setting task: F3BSpeedTask"));
-              ourContext.set(TC_F3BSpeedTask);
-              ourSpeedTask.stop();
+              ourBuzzer.on(PinManager::SHORT); 
+              logMsg(INFO, F("setting task: F3BSpeedMenu"));
+              resetRotaryEncoder();
+              ourContext.set(TC_F3BSpeedMenu);
               CLEAR_HISTORY;
               break;
             case 1: // "1:F3F-Task";
-              buzzOn(1); 
+              ourBuzzer.on(PinManager::SHORT); 
               logMsg(INFO, F("setting task: F3FDistanceTask"));
-              backContext=ourContext.get();
               ourContext.set(TC_F3FTask);
               CLEAR_HISTORY;
               break;
-            case 2: // "2:RangeTest";
-              buzzOn(1); 
+            case 2: // "2:Info";
+              ourBuzzer.on(PinManager::SHORT); 
               logMsg(INFO, F("setting task: F3XInfo"));
-              backContext=ourContext.get();
-              ourContext.set(TC_F3XRangeTest);
-              CLEAR_HISTORY;
-              break;
-            case 3: // "3:Einstellungen";
-              buzzOn(1); 
-              logMsg(INFO, F("setting task: F3XSettingsMenu"));
-              backContext=ourContext.get();
-              ourContext.set(TC_F3XSettingsMenu);
-              CLEAR_HISTORY;
-              break;
-            case 4: // "4:Infos";
-              buzzOn(1); 
-              logMsg(INFO, F("setting task: F3XInfo"));
-              backContext=ourContext.get();
               ourContext.set(TC_F3XInfo);
               CLEAR_HISTORY;
               break;
+            case 3: // "3:Radio-Info";
+              ourBuzzer.on(PinManager::SHORT); 
+              logMsg(INFO, F("setting task: F3XRadioInfo"));
+              ourContext.set(TC_F3XRadioInfo);
+              CLEAR_HISTORY;
+              break;
+            case 4: // "4:Settings";
+              ourBuzzer.on(PinManager::SHORT); 
+              logMsg(INFO, F("setting task: F3XSettingsMenu"));
+              ourContext.set(TC_F3XSettingsMenu);
+              resetRotaryEncoder();
+              CLEAR_HISTORY;
+              break;
+          }
+        }
+        break;
+      case TC_F3BSpeedMenu: { // -> ourF3BSpeedMenuItems
+        uint8_t menuPos =  getModulo(ourRotaryMenuPosition, ourF3BSpeedMenuSize); // !! use the right size here
+        logMsg(DEBUG, String(F("HW button pressed in TC_F3BSpeedMenu -> F3B speed menu context: ")) + String(menuPos));
+        switch (menuPos) {  // !! use the right size here !!
+          case 0: // "0:Start Tasktime";
+            logMsg(INFO, F("setting task: F3BSpeedTask"));
+            ourContext.set(TC_F3BSpeedTask);
+            ourSpeedTask.start();
+            CLEAR_HISTORY;
+            break;
+          case 1: // "1:Back"
+            ourSpeedTask.stop();
+            resetRotaryEncoder(0);
+            ourContext.set(TC_F3XBaseMenu);
+            break;
           }
         }
         break;
@@ -1939,29 +2159,43 @@ void updatePushButton(unsigned long aNow) {
         uint8_t menuPos =  getModulo(ourRotaryMenuPosition, ourSettingsMenuSize); // !! use the right size here
         logMsg(DEBUG, String(F("HW button pressed in F3XSettingsMenu -> setting menu context: ")) + String(menuPos));
         switch (menuPos){  // !! use the right size here !!
-          case 0: // "0:Buzzer an/aus";
-            ourBuzzerEnabled = ourBuzzerEnabled == true? false: true;
-            buzzOn(1);
+          case 0: // "0:Buzzer on/off";
+            if (ourBuzzer.isEnabled()) {
+              ourBuzzer.disable();
+            } else {
+              ourBuzzer.enable();
+            }
+            ourBuzzer.on(PinManager::SHORT);
             break;
-          case 1: // "1:Funkkanal";
-            buzzOn(1);
-            ourContext.set(TC_F3XRadioChannel);
-            ourRadioChannel = ourRadio.getChannel();
-            resetRotaryEncoder();
+          case 1: // "1:Radio channel";
+            ourBuzzer.on(PinManager::SHORT);
+            if (!ourRadioSendSettings || ourRadioQuality > 99.0f) {
+              ourContext.set(TC_F3XRadioChannel);
+              ourRadioChannel = ourRadio.getChannel();
+              resetRotaryEncoder();
+            } else {
+              ourContext.set(TC_F3XMessage);
+              ourContext.setInfo(String(F("no B-Line connected")));
+            }
             break;
-          case 2: // "2:Funk-Power";
-            buzzOn(1);
-            ourContext.set(TC_F3XRadioPower);
-            ourRadioPower=ourRadio.getPower();
-            resetRotaryEncoder();
+          case 2: // "2:Radio power";
+            ourBuzzer.on(PinManager::SHORT);
+            if (!ourRadioSendSettings || ourRadioQuality > 99.0f) {
+              ourContext.set(TC_F3XRadioPower);
+              ourRadioPower=ourRadio.getPower();
+              resetRotaryEncoder();
+            } else {
+              ourContext.set(TC_F3XMessage);
+              ourContext.setInfo(String(F("no B-Line connected")));
+            }
             break;
-          case 3: // "3:Anzeige drehen";
-            buzzOn(1);
+          case 3: // "3:Display invert";
+            ourBuzzer.on(PinManager::SHORT);
             ourConfig.oledFlipped = ourConfig.oledFlipped == true? false: true;
             ourOLED.setFlipMode(ourConfig.oledFlipped);
             break;
-          case 4: // "4:Drehknopf invert.";
-            buzzOn(1);
+          case 4: // "4:Rotary button inv.";
+            ourBuzzer.on(PinManager::SHORT);
             ourConfig.rotaryEncoderFlipped = ourConfig.rotaryEncoderFlipped ? false: true;
             ourREInversion = ourConfig.rotaryEncoderFlipped ? -1 : 1;
             {
@@ -1974,20 +2208,26 @@ void updatePushButton(unsigned long aNow) {
               }
             }
             break;
-          case 5: //  "5:Update Firmw.";
-            otaUpdate(false);
+          case 5: //  "5:Update firmware";
+            otaUpdate(false); // firmware
             break;
-          case 6: //  "6:Update Filesys.";
-            otaUpdate(true);
+          case 6: //  "6:Update filesystem";
+            otaUpdate(true); // filesystem
             break;
-          case 7: //  "7:Sichere Einstell.";
-            buzzOn(1);
-            // saveConfig();
+          case 7: //  "7:WiFi on/off";
+            WiFi.mode(WIFI_OFF) ; // client mode only
+            ourConfig.wifiIsActive = !ourConfig.wifiIsActive;
+            showDialog(2000, String(F("WiFi is ")) + (ourConfig.wifiIsActive ? String(F("enabled")) : String(F("disabled"))));
             break;
-          case 8: // "8:Hauptmenu";
-            buzzOn(1);
+          case 8: //  "8:Save settings";
+            ourBuzzer.on(PinManager::SHORT);
+            saveConfig();
+            showDialog(2000, String(F("Config saved ")));
+            break;
+          case 9: // "9:Main menu";
+            ourBuzzer.on(PinManager::SHORT);
+            resetRotaryEncoder(ourContext.get());
             ourContext.set(TC_F3XBaseMenu);
-            resetRotaryEncoder();
             break;
           }
         }
@@ -2011,82 +2251,23 @@ void updatePushButton(unsigned long aNow) {
       logMsg(INFO, F("react multi:") + String(buttonPressedCnt));
      
       switch (buttonPressedCnt) {
-        case 2:
+        case 3:
           switch (ourContext.get()) {
             case TC_F3BSpeedTask:
-              switch(ourSpeedTask.getTaskState()) {
-                case TaskTimeOverflow:
-                case TaskFinished:
-                  ourSpeedTask.stop();
-                  MULTI_PRESSED_FINISHED;
-                break;
-              }
+              ourSpeedTask.stop();
+              resetRotaryEncoder(0);
+              controlRotaryEncoder(true);
+              ourContext.back();
+              MULTI_PRESSED_FINISHED;
             break;
           }
+        break;
       }
     }
   }
 }
   
-  
-  /*
-    if (reactOnMultiplePressed && aNow > reactOnMultiplePressed) {
-      reactOnMultiplePressed=0;
-      switch(ourContext) {
-        case TC_F3BSpeedTask:
-          switch (buttonPressedCnt) {
-            case 3: 
-              logMsg(INFO, F("F3BSpeedTask.stop()"));
-              ourSpeedTask.stop();
-              break;
-            case 4: 
-              logMsg(INFO, F("go back to F3XInfo"));
-              ourSpeedTask.stop();
-              ourContext=TC_F3XInfo;
-              break;
-          }
-          break;
-        case TC_F3FTask:
-        case TC_F3XRangeTest:
-          switch (buttonPressedCnt) {
-            case 4: 
-              logMsg(INFO, F("go back to F3XInfo"));
-              ourSpeedTask.stop();
-              ourContext=TC_F3XInfo;
-              break;
-          }
-          break;
-        case TC_F3XBaseMenu:
-          switch (buttonPressedCnt) {
-            case 1: 
-              logMsg(INFO, F("setting task: F3BSpeedTask"));
-              ourContext=TC_F3BSpeedTask;
-              ourSpeedTask.stop();
-              CLEAR_HISTORY;
-              break;
-            case 2: 
-              logMsg(INFO, F("setting task: F3FDistanceTask"));
-              ourContext=TC_F3FTask;
-              CLEAR_HISTORY;
-              break;
-            case 3: 
-              logMsg(INFO, F("setting task: F3XRangeTest"));
-              ourContext=TC_F3XRangeTest;
-              CLEAR_HISTORY;
-              break;
-            case 4: 
-              logMsg(INFO, F("go back to F3XInitial"));
-              ourSpeedTask.stop();
-              ourContext=TC_F3XInfo;
-              CLEAR_HISTORY;
-              break;
-          }
-          break;
-      }
-    }
-  */
-
-void handleTimedEvents(unsigned long aNow) {
+void updateTimedEvents(unsigned long aNow) {
   if (ourTimedReset != 0 && aNow > ourTimedReset) {
     ourTimedReset = 0;
     ESP.restart();
@@ -2123,23 +2304,21 @@ double irr_low_pass_filter(double aSmoothedValue, double aCurrentValue, double a
 
 void resetRotaryEncoder(long aPos) {
   ourRotaryEncoder.write(aPos);
-  ourREOldPos = 0;
-  ourRotaryEncoderPosition = 0;
-  ourRotaryMenuPosition = 0;
+  ourREOldPos = LONG_MIN;
 }
 
-// with this function the rotary encoder can be disabled, to avoid unwanted rotation events
-void controlRotaryEncoder(boolean aStart) {
+// with this function the rotary encoder can be enabled/disabled, to avoid unwanted rotation events
+void controlRotaryEncoder(boolean aEnable) {
   static long storedPos = 0;
-  if (aStart && !ourREState) {
+  if (aEnable && !ourREState) {
     ourRotaryEncoder.write(storedPos);
     ourREState = true;
   }
-  if (!aStart && ourREState) {
+  if (!aEnable && ourREState) {
     storedPos = ourRotaryEncoder.read();
     ourREState = false;
   }
-  logMsg(LS_INTERNAL, String(F("RotaryEncoder enabled:")) + String(aStart));
+  logMsg(LS_INTERNAL, String(F("RotaryEncoder enabled:")) + String(aEnable));
 }
 
 
@@ -2161,36 +2340,30 @@ void updateRotaryEncoder(unsigned long aNow) {
     return;
   }
   
-  ourREPos = getRotaryEncoderPosition();
+  long position = getRotaryEncoderPosition();
 
-  static float smoothedPos = 0.0f;
-  smoothedPos = irr_low_pass_filter(smoothedPos, ourREPos, 0.10d);
-  long position = smoothedPos;
-  // position = ourREPos;
   if (position != ourREOldPos) {
-    int8_t delta = position - ourREOldPos;
-    ourRotaryEncoderPosition = position;
+    int8_t delta = 0;
+    if (ourREOldPos != LONG_MIN) {
+      delta = position - ourREOldPos;
+    }
     ourRotaryMenuPosition = position;
-
-    // encoder changes value 3 per grid step
-    // logMsg(INFO, F("Encoder:") + String(ourRotaryEncoderPosition));
-    // logMsg(INFO, F("Encoder mod:") + String(ourRotaryEncoderPosition));
 
     // ROTARY_EVENTS
     switch (ourContext.get()) {
       case TC_F3XBaseMenu:
-        buzzOn(1);
+      case TC_F3XSettingsMenu:
+        ourBuzzer.on(PinManager::SHORT);
         break;
       case TC_F3BSpeedTask:
         switch(ourSpeedTask.getTaskState()) {
           case TaskTimeOverflow:
           case TaskWaiting:
           case TaskFinished:
-          default:
             ourSpeedTask.stop();
             ourContext.set(TC_F3XBaseMenu);
-            resetRotaryEncoder();
-            buzzOn(1);
+            resetRotaryEncoder(TC_F3BSpeedTask);
+            ourBuzzer.on(PinManager::SHORT);
             break;
         }
         break;
@@ -2201,12 +2374,6 @@ void updateRotaryEncoder(unsigned long aNow) {
       case TC_F3XRadioPower:
         ourRadioPower += delta;
         ourRadioPower = getModulo(ourRadioPower, 4);
-        break;
-      case TC_F3XInfo:
-      case TC_F3XRangeTest:
-        ourContext.set(TC_F3XBaseMenu);
-        resetRotaryEncoder();
-        buzzOn(1);
         break;
     }
     ourREOldPos = position;
@@ -2240,9 +2407,9 @@ void loop()
 
   perfCheck(&updateWebServer, "time webserver", now);
 
-  perfCheck(&updateBatteryIn, "time battery check", now);
+  perfCheck(&updateBatterySupervision, "time battery supervision", now);
 
-  perfCheck(&handleTimedEvents, "time timedEvents", now);
+  perfCheck(&updateTimedEvents, "time timedEvents", now);
   
   #ifdef OLED 
   perfCheck(&updateOLED, "time oled display", now);
@@ -2256,9 +2423,6 @@ void loop()
   if (WiFi.status() == WL_CONNECTED) {
     #ifdef OTA
     ArduinoOTA.handle();
-    #endif
-    #ifdef NTPTIME
-    timeClient.update();
     #endif
     #ifdef USE_MDNS
     MDNS.update();
@@ -2275,24 +2439,4 @@ void loop()
   if (ourSecond > 5) {
     ourStartupPhase = false;
   }
-#ifdef NTPTIME
-  static long mcTime = 0;
-  if (ourSecond%15 == 0) {
-    if (timeClient.isTimeSet()) {
-      static unsigned long epoch_start = timeClient.getEpochTime();
-      unsigned long epoch = timeClient.getEpochTime() - epoch_start;
-      unsigned long vmillis = millis()/1000;
-      if (timeClient.isTimeSet() && mcTime == 0) {
-        mcTime = epoch - vmillis;
-      }
-      logMsg(DEBUG, String(F("Time: ") + getTimeStr(now)));
-      logMsg(DEBUG, timeClient.getFormattedTime());
-      logMsg(DEBUG, String(F("epoch: ")) + String(epoch));
-      logMsg(DEBUG, String(F("mctime: ")) + String(vmillis));
-      logMsg(DEBUG, String(F("drift: ")) + String((mcTime - (epoch - vmillis))));
-      logMsg(DEBUG, String(F("ref: ")) + String(mcTime));
-    }
-  }
-#endif
-
 }

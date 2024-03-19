@@ -19,24 +19,13 @@
    <div class="container">
     <div class="row">
      <div class="col-appname">F3X-Competition-Tool:</div>
-     <div class="col-version">FS-Version: 1.01, FW-Version: <span id="id_version">0.00</span></div>
+     <div class="col-version">Version: <span id="id_version">0.00</span></div>
     </div>
    </div>
    <div class="container">
     <h2>Task-Selection:</h2>
    </div>
    <div class="container">
-    <div class="row">
-     <div class="col-declaration-long">
-      <label>F3B-Speed-Task:</label>
-     </div>
-     <div class="col-button">
-      <button type="button" id="id_settings" onclick="window.location.href='/F3BSpeedTask.html'">Speed</button>
-     </div>
-     <div class="col-text">
-      <p> Page supporting Speed-Task (4 legs) time and training data measurement </p>
-     </div>
-    </div>
     <!--
     <div class="row">
      <div class="col-declaration-long">
@@ -62,20 +51,21 @@
       <p>show the stored F3B Speed data sets</p>
      </div>
     </div>
-   </div>
-   <hr>
     <div class="row">
      <div class="col-declaration-long">
-      <label>Range Test Page:</label>
+      <label>F3B-Speed-Task simulation:</label>
      </div>
      <div class="col-button">
-      <button type="button" id="id_settings" onclick="window.location.href='/F3XRangeTest.html'">RangeTest</button>
+      <button type="button" id="id_f3b_speed_task" onclick="window.location.href='/F3BSpeedTask.html'">Speed</button>
      </div>
      <div class="col-text">
-      <p> Test the B-line wireless connection </p>
+      <p> Page supporting F3B-Speed-Task (4 legs) time and training data measurement <br>
+         (only for demonstration purposes)</p>
      </div>
     </div>
    </div>
+   <hr>
+   <div class="container">
     <div class="row">
      <div class="col-declaration-long">
       <label>Internal Logging:</label>
@@ -94,7 +84,7 @@
       <label for="id_settings">Preferences:</label>
      </div>
      <div class="col-button">
-      <button type="button" onclick="window.location.href='/adminPage'"> Einstellungen ändern</button>
+      <button type="button" onclick="window.location.href='/adminPage.html'">Settings</button>
      </div>
      <div class="col-text">
       <p> setting page for WiFi, training and other </p>

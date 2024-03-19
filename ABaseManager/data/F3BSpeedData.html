@@ -13,7 +13,10 @@
   <link rel="stylesheet" href="./styles.css">
   <script type="text/javascript" src="./script.js"></script>
   <title>F3X-Competition</title>
+  <!--
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"> </script>
+  -->
+  <script type="text/javascript" src="./jquery-3.6.0.min.js"> </script>
  </head>
  <body onload="">
   <div id="id_body">
@@ -25,6 +28,7 @@
    </div>
    <div class="container">
     <h2>F3B-Speed-Data:</h2>
+    <p>These are the stored F3B measured datasets in chronological order</p>
    </div>
    <hr>
      <div class="tableData">List of flight data (most recent last):</div>
@@ -44,7 +48,7 @@
     </div>
     <div class="row">
      <div class="col-declaration-long">
-      <label>Delete Data:</label>
+      <label>Delete the data file from on the A-Line-Manager:</label>
      </div>
      <div class="col-button">
       <button type="button" id="id_delete_f3b_data" name="delete_f3b_data" value="true"
@@ -57,7 +61,14 @@
    </div>
    <hr>
    <div class="container">
-      <button type="button" onclick="window.location.href='/'"> Main Menu</button>
+    <div class="row">
+     <div class="col-setting-values">
+      <button type="button" onclick="window.location.href='/'">Back</button>
+     </div>
+     <div class="col-setting-descr">
+      <label for="id_backToRoot">go back to the main menu</label>
+     </div>
+    </div>
    </div>
    <hr>
    </div class="container">
@@ -67,61 +78,52 @@
   
   <script>
    getData("id_version");
-   // setInterval(function() {
-   //   // Call a function repetatively with 2 Second interval
-   //   getData("pollF3BSpeedTask");
-   // }, 1000); // 500mSeconds update rate
-
-   // setInterval(function() {
-   //   // Call a function repetatively with 2 Second interval
-   //   getDataInTaskstate("2", "id_running_speed_time");
-   // }, 250); // 500mSeconds update rate
   </script>
 
 
-<script>
+ <script>
   $(function() {
-    $.ajax({
-          url: '/F3BSpeedData.csv',
-          dataType: 'text',
-        }).done(successFunction);
+   $.ajax({
+    url: '/F3BSpeedData.csv',
+    dataType: 'text',
+   }).done(successFunction);
   });
 
 	function successFunction(data) {
-        var allRows = data.split(/\r?\n|\r/);
-        var table = '<table>';
-        for (var singleRow = 0; singleRow < allRows.length; singleRow++) {
-          if (singleRow === 0) {
-            table += '<thead>';
-            table += '<tr>';
-          } else {
-            table += '<tr>';
-          }
-          var rowCells = allRows[singleRow].split(';');
-          for (var rowCell = 0; rowCell < rowCells.length; rowCell++) {
-            if (singleRow === 0) {
-              table += '<th>';
-              table += rowCells[rowCell];
-              table += '</th>';
-            } else {
-              table += '<td>';
-              table += rowCells[rowCell];
-              table += '</td>';
-            }
-          }
-          if (singleRow === 0) {
-            table += '</tr>';
-            table += '</thead>';
-            table += '<tbody>';
-          } else {
-            table += '</tr>';
-          }
-        } 
-        table += '</tbody>';
-        table += '</table>';
-        $('#table_here').append(table);
-      }
-</script>
+   var allRows = data.split(/\r?\n|\r/);
+   var table = '<table>';
+   for (var singleRow = 0; singleRow < allRows.length; singleRow++) {
+    if (singleRow === 0) {
+     table += '<thead>';
+     table += '<tr>';
+    } else {
+     table += '<tr>';
+    }
+    var rowCells = allRows[singleRow].split(';');
+    for (var rowCell = 0; rowCell < rowCells.length; rowCell++) {
+     if (singleRow === 0) {
+      table += '<th>';
+      table += rowCells[rowCell];
+      table += '</th>';
+     } else {
+      table += '<td>';
+      table += rowCells[rowCell];
+      table += '</td>';
+     }
+    }
+    if (singleRow === 0) {
+     table += '</tr>';
+     table += '</thead>';
+     table += '<tbody>';
+    } else {
+     table += '</tr>';
+    }
+   } 
+   table += '</tbody>';
+   table += '</table>';
+   $('#table_here').append(table);
+  }
+ </script>
 
  </body>
 </html>

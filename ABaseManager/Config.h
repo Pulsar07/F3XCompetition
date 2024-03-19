@@ -18,9 +18,11 @@ typedef struct {
   char wlanPasswd[CONFIG_PASSW_L];
   char apSsid[CONFIG_SSID_L];
   char apPasswd[CONFIG_PASSW_L];
+  boolean wifiIsActive;
   boolean oledFlipped;
   boolean rotaryEncoderFlipped;
-
+  int8_t radioPower;
+  int8_t radioChannel;
 } configData_t;
 
 #endif

@@ -18,6 +18,8 @@ public:
   uint8_t getChannel();
   void setPower(uint8_t);
   uint8_t getPower();
+  String getPowerStr();
+  void setDefaults(); // all settings to default
   boolean transmit(String, uint8_t aRetrans=0);
   boolean available();
   // boolean write(const char*);
@@ -32,6 +34,7 @@ protected:
   char myName[7];
   boolean myAck;
   int8_t myRetransmitCnt;
+  String myStrBuffer;
 };
 
 #endif
