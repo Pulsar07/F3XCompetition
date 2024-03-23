@@ -15,7 +15,7 @@ static const char myName[] = "B-Line";
 3 : Feedback LED B-Line-Controller
 8 : 
 9 : RF24-NRF24L01 (CE brownwhite)
-10 : RF24-NRF24L01 (CSN brown)
+10 : RF24-NRF24L01 (CNS brown)
 11 : RF24-NRF24L01 MOSI (blue)
 12 : RF24-NRF24L01 MISO (green-white)
 13 : RF24-NRF24L01 SCK  (blue-white)
@@ -25,7 +25,7 @@ A7 : Analog Battery in
 #define PIN_SIGNAL_B_LINE 2
 #define PIN_LED           3
 #define PIN_RF24_CE       9
-#define PIN_RF24_CSN     10
+#define PIN_RF24_CNS     10
 #define PIN_RF24_MOSI    11
 #define PIN_RF24_MISO    12
 #define PIN_RF24_SCK     13
@@ -35,7 +35,7 @@ A7 : Analog Battery in
 static configData_t ourConfig;
 
 #include <RFTransceiver.h>
-RFTransceiver ourRadio(myName, PIN_RF24_CE, PIN_RF24_CSN); // (CE, CSN)
+RFTransceiver ourRadio(myName, PIN_RF24_CE, PIN_RF24_CNS); // (CE, CNS)
     
 unsigned long ourSecond = 0;
 

@@ -4,9 +4,13 @@
 
 
 F3BSpeedTask::F3BSpeedTask() {
+  myTasktime = 180; // default tasktime 3 minutes
   stop();
 }
 
+void F3BSpeedTask::setTasktime(uint16_t aTasktimeInSeconds) {
+  myTasktime = aTasktimeInSeconds;
+}
 /**
  * return the speed of the given leg in m/s
  */
@@ -61,7 +65,7 @@ uint8_t F3BSpeedTask::getDeadDistance(int8_t aSignal) {
 unsigned long F3BSpeedTask::getDeadDelay(int8_t aSignal) {
   unsigned long retVal = 0;
   if (mySignalDeadDelays[aSignal] != 0) {
-    switch ((F3BSpeedSignalTypes) aSignal) {
+    switch ((Progress) aSignal) {
       case B_LINE_CROSSED_1:
       case A_LINE_CROSSED_2:
       case B_LINE_CROSSED_2:
@@ -97,14 +101,14 @@ unsigned long F3BSpeedTask::getFlightTime(int8_t aIdx) {
     return -1;
   }
   if (aIdx == -1) { // get last time signaled time
-    if (getCurrentSignal() > A_LINE_CROSSED_1 ) { // speed flight started
-      retVal = mySignalTimeStamps[getCurrentSignal()] - mySignalTimeStamps[A_LINE_CROSSED_1];
+    if (getProgress() > A_LINE_CROSSED_1 ) { // speed flight started
+      retVal = mySignalTimeStamps[getProgress()] - mySignalTimeStamps[A_LINE_CROSSED_1];
     } else {
       logMsg(ERROR, "ERROR: getFlightTime no time set 2");
     }
   } else if (aIdx == RUNNING_VALUE) {
-    if (getCurrentSignal() == A_LINE_CROSSED_FINAL) {
-      retVal = mySignalTimeStamps[getCurrentSignal()] - mySignalTimeStamps[A_LINE_CROSSED_1];
+    if (getProgress() == A_LINE_CROSSED_FINAL) {
+      retVal = mySignalTimeStamps[getProgress()] - mySignalTimeStamps[A_LINE_CROSSED_1];
     } else {
       retVal = millis() - mySignalTimeStamps[A_LINE_CROSSED_1];
     }
@@ -119,11 +123,11 @@ unsigned long F3BSpeedTask::getFlightTime(int8_t aIdx) {
     if (mySignalTimeStamps[aIdx] == F3B_TIME_NOT_SET) {
       retVal = F3B_TIME_NOT_SET;
     } else 
-    if (aIdx == A_LINE_REVERSED) {
-      retVal = mySignalTimeStamps[aIdx] - myTaskStartTime;
-    } else {
+ // AL_REV   if (aIdx == A_LINE_REVERSED) {
+ // AL_REV     retVal = mySignalTimeStamps[aIdx] - myTaskStartTime;
+ // AL_REV   } else {
       retVal = mySignalTimeStamps[aIdx] - mySignalTimeStamps[A_LINE_CROSSED_1];
-    }
+ // AL_REV   }
   }
   return retVal;
   
@@ -137,7 +141,7 @@ void F3BSpeedTask::timeOverflow() {
   myTaskState = TaskTimeOverflow;
 }
 
-void F3BSpeedTask::signal(F3BSignalType aType) {
+void F3BSpeedTask::signal(Signal aType) {
   logMsg(INFO, String("F3BSpeedTask::signal(") + (aType == SignalA?'A':'B')+ String(")"));
   if (myTaskState != TaskRunning) {
     logMsg(ERROR, String(" not allowed in state ") + String(myTaskState));
@@ -145,52 +149,52 @@ void F3BSpeedTask::signal(F3BSignalType aType) {
   }
 
   if (aType == SignalA) {
-    switch (myCurrentSignal) {
+    switch (myProgress) {
       case NOT_STARTED: // REGULAR : reversed A line crossing, 
-        myCurrentSignal = A_LINE_REVERSED;
-        mySignalTimeStamps[myCurrentSignal] = millis();
-        mySignalACallback();
-        break;
-      case A_LINE_REVERSED: // REGULAR : A line crossing first time, start of first leg
-        myCurrentSignal = A_LINE_CROSSED_1;
-        mySignalTimeStamps[myCurrentSignal] = millis();
+ // AL_REV       myProgress = A_LINE_REVERSED;
+ // AL_REV       mySignalTimeStamps[myProgress] = millis();
+ // AL_REV       mySignalACallback();
+ // AL_REV       break;
+ // AL_REV     case A_LINE_REVERSED: // REGULAR : A line crossing first time, start of first leg
+        myProgress = A_LINE_CROSSED_1;
+        mySignalTimeStamps[myProgress] = millis();
         mySignalACallback();
         break;
       case A_LINE_CROSSED_1: // in case of reflight
-        mySignalTimeStamps[A_LINE_REVERSED] = mySignalTimeStamps[A_LINE_CROSSED_1];
-        myCurrentSignal = A_LINE_CROSSED_1;
-        mySignalTimeStamps[myCurrentSignal] = millis();
+ // AL-REV       mySignalTimeStamps[A_LINE_REVERSED] = mySignalTimeStamps[A_LINE_CROSSED_1];
+        myProgress = A_LINE_CROSSED_1;
+        mySignalTimeStamps[myProgress] = millis();
         mySignalACallback();
         break;
       case B_LINE_CROSSED_1: // REGULAR : A line crossing second time, start of third leg
-        myCurrentSignal = A_LINE_CROSSED_2;
-        mySignalTimeStamps[myCurrentSignal] = millis();
+        myProgress = A_LINE_CROSSED_2;
+        mySignalTimeStamps[myProgress] = millis();
         mySignalACallback();
         break;
       case A_LINE_CROSSED_2: // TRAINING: A turn delay signal
         mySignalDeadDelays[A_LINE_CROSSED_2] = millis();
         break;
       case B_LINE_CROSSED_2: // REGULAR : A line crossing third time
-        myCurrentSignal = A_LINE_CROSSED_FINAL;
-        mySignalTimeStamps[myCurrentSignal] = millis();
+        myProgress = A_LINE_CROSSED_FINAL;
+        mySignalTimeStamps[myProgress] = millis();
         myTaskState = TaskFinished;
         mySignalACallback();
         logMsg(INFO, "F3BSpeedTask::TaskFinished" ); 
         break;
     }
   } else if (aType == SignalB) {
-    switch (myCurrentSignal) {
+    switch (myProgress) {
       case A_LINE_CROSSED_1: // REGULAR : B line crossing first time, start of second leg
-        myCurrentSignal = B_LINE_CROSSED_1;
-        mySignalTimeStamps[myCurrentSignal] = millis();
+        myProgress = B_LINE_CROSSED_1;
+        mySignalTimeStamps[myProgress] = millis();
         mySignalBCallback();
         break;
       case B_LINE_CROSSED_1: // TRAINING: first B turn delay signal
         mySignalDeadDelays[B_LINE_CROSSED_1] = millis();
         break;
       case A_LINE_CROSSED_2: // REGULAR : B line crossing second time, start of fourth leg
-        myCurrentSignal = B_LINE_CROSSED_2;
-        mySignalTimeStamps[myCurrentSignal] = millis();
+        myProgress = B_LINE_CROSSED_2;
+        mySignalTimeStamps[myProgress] = millis();
         mySignalBCallback();
         break;
       case B_LINE_CROSSED_2: // TRAINING: second B turn delay signal
@@ -221,26 +225,26 @@ void F3BSpeedTask::start() {
 
 void F3BSpeedTask::resetSignals() {
   logMsg(INFO, "resetSignals() " );
-  myCurrentSignal = NOT_STARTED;
+  myProgress = NOT_STARTED;
   for (int i=0; i<SIGNAL_TIMER_CNT; i++) {
     mySignalTimeStamps[i] = F3B_TIME_NOT_SET;
     mySignalDeadDelays[i] = 0;
   }
 }
 
-long F3BSpeedTask::getTaskTime() {
+long F3BSpeedTask::getRemainingTasktime() {
   long retVal = 0;
   switch (myTaskState) {
     case TaskRunning:
       // retVal = millis() - myTaskStartTime;
-      retVal = myTaskStartTime+F3B_SPEED_TASK_MAX_TASK_TIME*1000-millis();
+      retVal = myTaskStartTime+myTasktime*1000-millis();
       if (retVal < 0) {
         retVal = 0;
       }
       break;
     case TaskFinished:
       // retVal = mySignalTimeStamps[A_LINE_CROSSED_FINAL]  - myTaskStartTime;
-      retVal = myTaskStartTime+F3B_SPEED_TASK_MAX_TASK_TIME*1000 - mySignalTimeStamps[A_LINE_CROSSED_FINAL] ;
+      retVal = myTaskStartTime+myTasktime*1000 - mySignalTimeStamps[A_LINE_CROSSED_FINAL] ;
       break;
     case TaskTimeOverflow:
       retVal = 0; 
@@ -249,16 +253,16 @@ long F3BSpeedTask::getTaskTime() {
   return retVal;
 }
 
-F3BSpeedSignalTypes F3BSpeedTask::getCurrentSignal() {
-  return myCurrentSignal;
+F3BSpeedTask::Progress F3BSpeedTask::getProgress() {
+  return myProgress;
 }
 
-F3BSpeedTaskState F3BSpeedTask::getTaskState() {
+F3BSpeedTask::State F3BSpeedTask::getTaskState() {
   return myTaskState;
 }
 
 void F3BSpeedTask::update() {
-  if ( myTaskState == TaskRunning && getTaskTime() == 0 ) {
+  if ( myTaskState == TaskRunning && getRemainingTasktime() == 0 ) {
     logMsg(ERROR, "Task time overflow");
     timeOverflow();
   }

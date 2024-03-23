@@ -122,7 +122,7 @@
    <div class="container">
     <div class="row">
      <div class="col-setting-values">
-      <button type="button" id="id_reset" name="cmd_resetConfig" value="yes" onclick="sendNameValue(this.name, this.value)">
+      <button type="button" id="id_reset" name="cmd_resetConfig" value="yes" onclick="sendNameValue(this.name, this.value); getAll()">
        Set factory defaults</button>
      </div>
      <div class="col-setting-descr">
@@ -205,15 +205,19 @@
      sendValueForId("id_apPasswd");
    }
 
-   getData(
-     "id_wlanSsid",
-     "id_apSsid",
-     "id_wifiActive",
-     "id_online_status",
-     "id_radio_channel",
-     "id_radio_power",
-     "initHeaderData"
-   );
+   function getAll() {
+     getData(
+       "id_wlanSsid",
+       "id_apSsid",
+       "id_wifiActive",
+       "id_online_status",
+       "id_radio_channel",
+       "id_radio_power",
+       "initHeaderData"
+     );
+   }
+
+   getAll();
 
    setInterval(function() {
      getData("id_online_status", "initHeaderData" );

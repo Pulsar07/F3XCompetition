@@ -23,6 +23,7 @@ typedef struct {
   boolean rotaryEncoderFlipped;
   int8_t radioPower;
   int8_t radioChannel;
+  int16_t f3bSpeedTasktime;
 } configData_t;
 
 #endif

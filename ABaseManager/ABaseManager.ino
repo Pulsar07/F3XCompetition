@@ -31,7 +31,7 @@
 #include "F3BSpeedTask.h"
 #include "settings.h"
 
-#define APP_VERSION "V028"
+#define APP_VERSION "V029"
 
 /*
 Version History
@@ -43,6 +43,7 @@ Version History
  V026 13.03.2024: RS : Web-pages redesigned
  V027 15.03.2024: RS : Buzzer refactored to PinManager-class to support beep sequences for battery low warning
  V028 18.03.2024: RS : new speed start / back menu added
+ V029 19.03.2024: RS : F3B Speed Tasktime is now a config item.
 */
 
 /**
@@ -60,7 +61,7 @@ static const char CMDSEP_STR[] = ",";
 D0 : RF24-NRF24L01 CE (brown-white)
 D1 : OLED-SSD1306 SCL
 D2 : OLED-SSD1306 SDA 
-D3 : RF24-NRF24L01 CSN (brown) 
+D3 : RF24-NRF24L01 CNS (brown) 
 D4 : Signalling Button A-Line
 D5 : RF24-NRF24L01 SCK (blue-white) 
 D6 : RF24-NRF24L01 MISO (green-white)
@@ -75,7 +76,7 @@ D10/TX : KY-040 Encoder - CLK
 #define PIN_RF24_CE       D0
 #define PIN_OLED_SCL      D1
 #define PIN_OLED_SDA      D2
-#define PIN_RF24_CSN      D3
+#define PIN_RF24_CNS      D3
 #define PIN_SIGNAL_A_LINE D4
 #define PIN_RF24_SCK      D5
 #define PIN_RF24_MISO     D6
@@ -95,7 +96,7 @@ D10/TX : KY-040 Encoder - CLK
 #endif
 
 #include <RFTransceiver.h>
-RFTransceiver ourRadio(myName, PIN_RF24_CE, PIN_RF24_CSN); // (CE, CSN)
+RFTransceiver ourRadio(myName, PIN_RF24_CE, PIN_RF24_CNS); // (CE, CSN)
 
 #define USE_RXTX_AS_GPIO
 
@@ -113,11 +114,11 @@ static long ourREOldPos  = 0;
 enum ToolContext {
   TC_F3XBaseMenu,
   TC_F3XSettingsMenu,
+  TC_F3BSpeedTasktime,
   TC_F3XRadioChannel,
   TC_F3XRadioPower,
   TC_F3XInfo,
   TC_F3XRadioInfo,
-  TC_F3XOtaUpdate,
   TC_F3XMessage,
   TC_F3BSpeedMenu,
   TC_F3BSpeedTask,
@@ -205,17 +206,18 @@ const uint8_t ourF3XBaseMenuSize = sizeof(ourF3XBaseMenuItems) / sizeof(char*);;
 
 // TC_F3XSettingsMenu
 const char* ourSettingsMenuName = "Settings";
-const char* ourSettingsMenu0 = "0:Buzzer on/off";
-const char* ourSettingsMenu1 = "1:Radio channel";
-const char* ourSettingsMenu2 = "2:Radio power";
-const char* ourSettingsMenu3 = "3:Display invert";
-const char* ourSettingsMenu4 = "4:Rotary button inv.";
-const char* ourSettingsMenu5 = "5:Update firmware";
-const char* ourSettingsMenu6 = "6:Update filesystem";
-const char* ourSettingsMenu7 = "7:WiFi on/off";
-const char* ourSettingsMenu8 = "8:Save settings";
-const char* ourSettingsMenu9 = "9:Main menu";
-const char* ourSettingsMenuItems[] = {ourSettingsMenu0, ourSettingsMenu1, ourSettingsMenu2, ourSettingsMenu3, ourSettingsMenu4, ourSettingsMenu5, ourSettingsMenu6, ourSettingsMenu7, ourSettingsMenu8, ourSettingsMenu9};
+const char* ourSettingsMenu0 = "0:F3B Speed Ttime";
+const char* ourSettingsMenu1 = "1:Buzzer on/off";
+const char* ourSettingsMenu2 = "2:Radio channel";
+const char* ourSettingsMenu3 = "3:Radio power";
+const char* ourSettingsMenu4 = "4:Display invert";
+const char* ourSettingsMenu5 = "5:Rotary button inv.";
+const char* ourSettingsMenu6 = "6:Update firmware";
+const char* ourSettingsMenu7 = "7:Update filesystem";
+const char* ourSettingsMenu8 = "8:WiFi on/off";
+const char* ourSettingsMenu9 = "9:Save settings";
+const char* ourSettingsMenu10 = "10:Main menu";
+const char* ourSettingsMenuItems[] = {ourSettingsMenu0, ourSettingsMenu1, ourSettingsMenu2, ourSettingsMenu3, ourSettingsMenu4, ourSettingsMenu5, ourSettingsMenu6, ourSettingsMenu7, ourSettingsMenu8, ourSettingsMenu9, ourSettingsMenu10};
 const uint8_t ourSettingsMenuSize = sizeof(ourSettingsMenuItems) / sizeof(char*);
 
 // TC_F3BSpeedMenu
@@ -261,7 +263,7 @@ ESP8266WebServer ourWebServer(80);
 unsigned long ourSecond = 0;
 
 static configData_t ourConfig;
-F3BSpeedTask ourSpeedTask;
+F3BSpeedTask ourF3BSpeedTask;
 unsigned long ourWlanRoundTripTime=0;
 unsigned long ourRadioRequestTime=0;
 float ourRadioRoundTripTime=0;
@@ -368,20 +370,20 @@ class F3BTaskData {
         String line;
         line += "\n";
         line += "F3BSpeed;";
-        line += getSpeedTimeString(ourSpeedTask.getFlightTime(A_LINE_CROSSED_FINAL), F3B_TIME_NOT_SET, 0, 0, 0);
+        line += getSpeedTimeString(ourF3BSpeedTask.getFlightTime(F3BSpeedTask::A_LINE_CROSSED_FINAL), F3B_TIME_NOT_SET, 0, 0, 0);
         line += ";";
-        line += ourSpeedTask.getFinalSpeed()*3.6f;
+        line += ourF3BSpeedTask.getFinalSpeed()*3.6f;
         line += "km/h";
         line += ";";
         
         for (uint8_t i=0; i<5; i++) {
-        logMsg(LS_INTERNAL, String(F("leg data: ")) + String(i) + "/" + String(ourSpeedTask.getLegSpeed(i)*3.6f));
+        logMsg(LS_INTERNAL, String(F("leg data: ")) + String(i) + "/" + String(ourF3BSpeedTask.getLegSpeed(i)*3.6f));
           line += getSpeedTimeString(
-                    ourSpeedTask.getFlightTime(i+1), 
-                    ourSpeedTask.getLegTime(i), 
-                    ourSpeedTask.getLegSpeed(i)*3.6f, 
-                    ourSpeedTask.getDeadDelay(i+1),
-                    ourSpeedTask.getDeadDistance(i+1), ';', (i==0||i==4)?false:true);
+                    ourF3BSpeedTask.getFlightTime(i+1), 
+                    ourF3BSpeedTask.getLegTime(i), 
+                    ourF3BSpeedTask.getLegSpeed(i)*3.6f, 
+                    ourF3BSpeedTask.getDeadDelay(i+1),
+                    ourF3BSpeedTask.getDeadDistance(i+1), ';', (i==0||i==4)?false:true);
           if (i != 4) {
             line += ";";
           }
@@ -408,7 +410,7 @@ void restartMCs(uint16_t aDelay, bool aRestartOnlyBLine=false) {
 void reactonSignalA() {
   ourBuzzer.on(500);
   logMsg(DEBUG, "reactonSignalA");
-  if (ourSpeedTask.getTaskState() == TaskFinished) {
+  if (ourF3BSpeedTask.getTaskState() == F3BSpeedTask::TaskFinished) {
     ourF3BTaskData.writeData();
   }
 }
@@ -446,7 +448,7 @@ char* getSpeedTimeString(unsigned long aTime, unsigned long aLegTime, uint16_t a
   int minutes = tminutes % 60;
   static char buffer[35];
   if (aTime == F3B_TIME_NOT_SET ) {
-    if (ourSpeedTask.getTaskState() == TaskTimeOverflow) {
+    if (ourF3BSpeedTask.getTaskState() == F3BSpeedTask::TaskTimeOverflow) {
       sprintf(&buffer[0],"XX:XX.XX : task time overflow");  // len=29+1
     } else {
       sprintf(&buffer[0],"__:__.__");
@@ -594,8 +596,8 @@ void setupWiFi() {
       IPAddress myIP = WiFi.softAPIP();
       logMsg(INFO, F("AP setup done!"));
       logMsg(INFO, String(F("Host IP Address: ")) + myIP.toString());
-      logMsg(INFO, String(F("Please connect to SSID: ")) + ourConfig.apSsid + String(F(", PW: ")) + ourConfig.apPasswd);
-      forceOLED(0, String(("WiFi IP: ") + myIP.toString()));
+      logMsg(INFO, String(F("Please connect to SSID: ")) + String(ourConfig.apSsid) + String(F(", PW: ")) + ourConfig.apPasswd);
+      forceOLED(0, String(F("WiFi AP-SSID: ")) + String(ourConfig.apSsid) + String(F(" IP: ")) + myIP.toString());
       delay(1000);
     } else {
       forceOLED(0, String("WiFi: not started"));
@@ -615,6 +617,8 @@ String getWiFiIp(String* ret) {
   if (WiFi.status() == WL_CONNECTED) {
     ret->concat(WiFi.localIP().toString());
   } else {
+    ret->concat(String(ourConfig.apSsid));
+    ret->concat(String(F("/")));
     ret->concat(WiFi.softAPIP().toString());
   }
   return *ret;
@@ -678,19 +682,19 @@ void setWebDataReq() {
   // general settings stuff
   if (name == F("signal_a")) {
     logMsg(INFO, F("signal A event from web client"));
-    ourSpeedTask.signal(SignalA);
+    ourF3BSpeedTask.signal(F3BSpeedTask::SignalA);
   } else
   if (name == F("signal_b")) {
     logMsg(INFO, F("signal B event from web client"));
-    ourSpeedTask.signal(SignalB);
+    ourF3BSpeedTask.signal(F3BSpeedTask::SignalB);
   } else 
   if (name == F("stop_task")) {
     logMsg(INFO, F("stop task event from web client"));
-    ourSpeedTask.stop();
+    ourF3BSpeedTask.stop();
   } else 
   if (name == F("start_task")) {
     logMsg(INFO, F("start task event from web client"));
-    ourSpeedTask.start();
+    ourF3BSpeedTask.start();
   } else 
   if (name == F("start_rt_measurement")) {
     logMsg(DEBUG, F("start_rt_measurement"));
@@ -842,23 +846,23 @@ void getWebHeaderData(String* aReturnString, boolean aForce=false) {
 void getF3BSpeedWebData(String* aReturnString, boolean aForce=false) {
   String taskstr;
 
-  static F3BSpeedTaskState webTaskState = TaskNotSet;
-  if (ourSpeedTask.getTaskState() != webTaskState || aForce) {
-    webTaskState = ourSpeedTask.getTaskState();
-    switch (ourSpeedTask.getTaskState()) {
-      case TaskWaiting:
+  static F3BSpeedTask::State webTaskState = F3BSpeedTask::TaskNotSet;
+  if (ourF3BSpeedTask.getTaskState() != webTaskState || aForce) {
+    webTaskState = ourF3BSpeedTask.getTaskState();
+    switch (ourF3BSpeedTask.getTaskState()) {
+      case F3BSpeedTask::TaskWaiting:
         *aReturnString += String(F("id_running_speed_time="))
                       + getSpeedTimeString(F3B_TIME_NOT_SET, F3B_TIME_NOT_SET, 0, 0, 0)
                       + MYSEP_STR;
         taskstr = F("Ready, waiting for START speed task");
         break;
-      case TaskRunning:
+      case F3BSpeedTask::TaskRunning:
         taskstr = F("task started, signals will be handled");
         break;
-      case TaskTimeOverflow:
+      case F3BSpeedTask::TaskTimeOverflow:
         taskstr = String(F("task stopped, task time overflow"));
         break;
-      case TaskFinished:
+      case F3BSpeedTask::TaskFinished:
         taskstr = F("task finished!");
         break;
       default:
@@ -871,31 +875,31 @@ void getF3BSpeedWebData(String* aReturnString, boolean aForce=false) {
   int numTimer=0;
   if (aForce) {
     fromTimer = 0;
-    numTimer = 6;
+    numTimer = 5;
   } else
-  if (ourSpeedTask.getTaskState() == TaskWaiting ) {
-    numTimer = 6;
+  if (ourF3BSpeedTask.getTaskState() == F3BSpeedTask::TaskWaiting ) {
+    numTimer = 5;
   } else
-  if (ourSpeedTask.getTaskState() == TaskTimeOverflow ) {
-    fromTimer = ourSpeedTask.getCurrentSignal()+1;
-    numTimer = 6-fromTimer;
+  if (ourF3BSpeedTask.getTaskState() == F3BSpeedTask::TaskTimeOverflow ) {
+    fromTimer = ourF3BSpeedTask.getProgress()+1;
+    numTimer = 5-fromTimer;
   } else
-  if (ourSpeedTask.getTaskState() == TaskRunning || ourSpeedTask.getTaskState() == TaskFinished ) {
-    switch(ourSpeedTask.getCurrentSignal()) {
-      case A_LINE_CROSSED_1:
-        // in case of A_LINE_CROSSED_1, send also the A_LINE_REVERSED signal
-        // due to possible reflight 
-        fromTimer=A_LINE_REVERSED;
-        numTimer = 2;
-        break;
-      case NOT_STARTED:
+  if (ourF3BSpeedTask.getTaskState() == F3BSpeedTask::TaskRunning || ourF3BSpeedTask.getTaskState() == F3BSpeedTask::TaskFinished ) {
+    switch(ourF3BSpeedTask.getProgress()) {
+// AL_REV      case A_LINE_CROSSED_1:
+// AL_REV        // in case of A_LINE_CROSSED_1, send also the A_LINE_REVERSED signal
+// AL_REV        // due to possible reflight 
+// AL_REV        fromTimer=A_LINE_REVERSED;
+// AL_REV        numTimer = 2;
+// AL_REV        break;
+      case F3BSpeedTask::NOT_STARTED:
         // send all timer
         fromTimer=0;
-        numTimer = 6;
+        numTimer = 5;
         break;
       default:
         // send the current timer
-        fromTimer = max(ourSpeedTask.getCurrentSignal()-1, 0);
+        fromTimer = max(ourF3BSpeedTask.getProgress()-1, 0);
         numTimer = 2;
         break;
     }
@@ -905,21 +909,21 @@ void getF3BSpeedWebData(String* aReturnString, boolean aForce=false) {
     taskstr += String(F("id_speed_time_")) 
               + String(i) + F("=") 
                   + getSpeedTimeString(
-                      ourSpeedTask.getFlightTime(i), 
-                      ourSpeedTask.getLegTime(i-1), 
-                      ourSpeedTask.getLegSpeed(i-1)*3.6f, 
-                      ourSpeedTask.getDeadDelay(i),
-                      ourSpeedTask.getDeadDistance(i))
+                      ourF3BSpeedTask.getFlightTime(i), 
+                      ourF3BSpeedTask.getLegTime(i-1), 
+                      ourF3BSpeedTask.getLegSpeed(i-1)*3.6f, 
+                      ourF3BSpeedTask.getDeadDelay(i),
+                      ourF3BSpeedTask.getDeadDistance(i))
               + MYSEP_STR;
   }
   if (taskstr.length() > 0) {
     *aReturnString += taskstr;
   }
 
-  *aReturnString += String(F("id_speed_task_time=")) + getTimeStr(ourSpeedTask.getTaskTime(), true) + MYSEP_STR;
-  if (ourSpeedTask.getCurrentSignal() == A_LINE_CROSSED_FINAL) {
+  *aReturnString += String(F("id_speed_task_time=")) + getTimeStr(ourF3BSpeedTask.getRemainingTasktime(), true) + MYSEP_STR;
+  if (ourF3BSpeedTask.getProgress() == F3BSpeedTask::A_LINE_CROSSED_FINAL) {
     *aReturnString += String(F("id_running_speed_time="))
-                  + getSpeedTimeString(ourSpeedTask.getFlightTime(RUNNING_VALUE), F3B_TIME_NOT_SET, 0, 0, 0)
+                  + getSpeedTimeString(ourF3BSpeedTask.getFlightTime(F3BSpeedTask::RUNNING_VALUE), F3B_TIME_NOT_SET, 0, 0, 0)
                   + MYSEP_STR;
   }
 }
@@ -1049,11 +1053,11 @@ void getWebDataReq() {
       response += pushData;
     } else
     if (argName.equals(F("id_running_speed_time"))) {
-      if (ourSpeedTask.getTaskState() == TaskRunning ) {
+      if (ourF3BSpeedTask.getTaskState() == F3BSpeedTask::TaskRunning ) {
         String resp;
-        if (ourSpeedTask.getCurrentSignal() >= A_LINE_CROSSED_1) {
+        if (ourF3BSpeedTask.getProgress() >= F3BSpeedTask::A_LINE_CROSSED_1) {
           resp = String(F("id_running_speed_time="))
-                    + getSpeedTimeString(ourSpeedTask.getFlightTime(RUNNING_VALUE), F3B_TIME_NOT_SET, 0, 0, 0)
+                    + getSpeedTimeString(ourF3BSpeedTask.getFlightTime(F3BSpeedTask::RUNNING_VALUE), F3B_TIME_NOT_SET, 0, 0, 0)
                     + MYSEP_STR;
         } else {
           resp = String(F("id_running_speed_time="))
@@ -1177,6 +1181,9 @@ void setup_ota() {
   });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
     // logMsg(DEBUG, Progress: %u%%\r", (progress / (total / 100)));
+      forceOLED(String("OTA Update"), String(progress) + String(F("/")) + String(total));
+    if (progress%5==0) {
+    }
   });
   ArduinoOTA.onError([](ota_error_t error) {
     String printout = F("Error[");
@@ -1204,7 +1211,7 @@ void setup_ota() {
 
 void otaUpdate(bool aFileSystemUpdate) {
   String url;
-  ourContext.set(TC_F3XOtaUpdate);
+  ourContext.set(TC_F3XMessage);
   if (aFileSystemUpdate) {
     url=F("http://f3b.so-fa.de/f3xtrainer/f3xa_fs.bin");
     ourContext.setInfo("updating fs ...");
@@ -1255,7 +1262,8 @@ void setupRemoteCmd() {
 }
 
 void setupSpeedTask() {
-  ourSpeedTask.init(&reactonSignalA, &reactonSignalB);
+  ourF3BSpeedTask.init(&reactonSignalA, &reactonSignalB);
+  ourF3BSpeedTask.setTasktime(ourConfig.f3bSpeedTasktime);
   ourF3BTaskData.init();
 }
 
@@ -1320,7 +1328,7 @@ void saveConfig() {
 }
 
 void setDefaultConfig() {
-  logMsg(INFO, F("setting default config to EEPROM "));
+  logMsg(LS_INTERNAL, F("setting default config to EEPROM "));
   // Reset EEPROM bytes to '0' for the length of the data structure
   strncpy(ourConfig.version , CONFIG_VERSION, CONFIG_VERSION_L);
   strncpy(ourConfig.wlanSsid, "", CONFIG_SSID_L);
@@ -1332,6 +1340,7 @@ void setDefaultConfig() {
   ourConfig.rotaryEncoderFlipped = false;
   ourConfig.radioChannel = 110;
   ourConfig.radioPower = RF24_PA_HIGH;
+  ourConfig.f3bSpeedTasktime = 150;
 }
 
 void loadConfig() {
@@ -1379,8 +1388,16 @@ void setupConfig() {
   cfg.concat(String(F("/")));
   cfg.concat(String(ourConfig.radioChannel));
   forceOLED(0, cfg);
-  delay(2500);
-
+  delay(1500);
+  forceOLED(0, cfg);
+  cfg = F("Cfg: F3B Speed ttime :");
+  if (ourConfig.f3bSpeedTasktime < 60 || ourConfig.f3bSpeedTasktime > 300) {
+    ourConfig.f3bSpeedTasktime = 180;
+  }
+  cfg.concat(String(ourConfig.f3bSpeedTasktime));
+  cfg.concat(String(F("s")));
+  forceOLED(0, cfg);
+  delay(1500);
 } 
 
 void setup() {
@@ -1441,7 +1458,7 @@ void updateRadio(unsigned long aNow) {
         id = arg->toInt();
         if (id != LastId) { 
           logMsg(INFO, F("Signal-B received"));
-          ourSpeedTask.signal(SignalB);
+          ourF3BSpeedTask.signal(F3BSpeedTask::SignalB);
         } else {
           logMsg(WARNING, F("Signal-B retarded"));
         }
@@ -1541,6 +1558,19 @@ void updateBuzzer(unsigned long aNow) {
 }
 
 #ifdef OLED 
+void showF3BSpeedTasktime() {
+  // TC_F3BSpeedTasktime:
+  ourOLED.setFont(oledFontLarge);
+
+  ourOLED.setCursor(0, 12+4);
+  ourOLED.print(F("F3B Speed Tasktime"));
+
+  ourOLED.setFont(oledFontBig);
+  ourOLED.setCursor(0, 50);
+  ourOLED.print(String(ourConfig.f3bSpeedTasktime));
+  ourOLED.print(F("s"));
+}
+
 void showRadioChannelPage() {
   // TC_F3XRadioChannel:
   ourOLED.drawBox(0, 0, 128, 16);
@@ -1691,17 +1721,6 @@ void showMessagePage() {
   ourOLED.print(ourContext.getInfoString());
 }
 
-void showUpdatePage() {
-  ourOLED.setFont(oledFontLarge);
-
-  ourOLED.setCursor(0, 12+4);
-  ourOLED.print(F("F3X Update"));
-
-  ourOLED.setCursor(5, 28);
-  ourOLED.setFont(oledFontNormal);
-  ourOLED.print(ourContext.getInfoString());
-}
-
 void showOLEDMenu(const char* aItems[], uint8_t aNumItems, const char* aName) {
   ourOLED.drawBox(0, 0, 128, 16);
   ourOLED.drawBox(0, 28, 128, 14);
@@ -1749,7 +1768,7 @@ void showNotYetImplemented() {
 
 void showF3BSpeedTask() {
   static unsigned long lastFT = 0;
-  unsigned long flightTime = ourSpeedTask.getFlightTime(RUNNING_VALUE);
+  unsigned long flightTime = ourF3BSpeedTask.getFlightTime(F3BSpeedTask::RUNNING_VALUE);
   
 
   String runSpeedTime;
@@ -1760,54 +1779,60 @@ void showF3BSpeedTask() {
   String info;
 
   char taskState='?';
-  if (flightTime != lastFT || ourSpeedTask.getTaskState() != TaskRunning) {
+  if (flightTime != lastFT || ourF3BSpeedTask.getTaskState() != F3BSpeedTask::TaskRunning) {
     lastFT = flightTime;
-    switch (ourSpeedTask.getTaskState()) {
-      case TaskRunning:
+    switch (ourF3BSpeedTask.getTaskState()) {
+      case F3BSpeedTask::TaskRunning:
         taskState='R';
-        if (ourSpeedTask.getCurrentSignal() >=0) {
-          taskState= ourSpeedTask.getCurrentSignal() +'0';
+        if (ourF3BSpeedTask.getProgress() >=0) {
+          taskState= ourF3BSpeedTask.getProgress() +'0';
         }
-        switch (ourSpeedTask.getCurrentSignal()) {
-          case NOT_STARTED:
-            info=F("P:A-Line rev Cross");
+        switch (ourF3BSpeedTask.getProgress()) {
+          case F3BSpeedTask::NOT_STARTED:
+// AL_REV            info=F("P:A-Line rev Cross");
+// AL_REV            break;
+// AL_REV          case A_LINE_REVERSED:
+            info=F("P:1.A crossing");
             break;
-          case A_LINE_REVERSED:
-            info=F("P:Enter 1.leg");
+          case F3BSpeedTask::A_LINE_CROSSED_1:
+            info=F("P:1.B turn/1.A cross ");
             break;
-          case B_LINE_CROSSED_1:
-            info=F("P:2. turn");
+          case F3BSpeedTask::B_LINE_CROSSED_1:
+            info=F("P:1.A turn");
             break;
-          case B_LINE_CROSSED_2:
-            info=F("P:target cross");
+          case F3BSpeedTask::A_LINE_CROSSED_2:
+            info=F("P:2.B turn");
+            break;
+          case F3BSpeedTask::B_LINE_CROSSED_2:
+            info=F("P:A final cross");
             break;
           default:
             info=F("P:---");
             break;
         }
        
-        if (ourSpeedTask.getCurrentSignal() >= A_LINE_CROSSED_1) {
+        if (ourF3BSpeedTask.getProgress() >= F3BSpeedTask::A_LINE_CROSSED_1) {
           runSpeedTime=getSpeedTimeString(flightTime, F3B_TIME_NOT_SET, 0, 0, 0);
         }
         break;
-      case TaskWaiting:
+      case F3BSpeedTask::TaskWaiting:
         taskState='W';
         info=F("P:Start Tasktime");
         break;
-      case TaskTimeOverflow:
+      case F3BSpeedTask::TaskTimeOverflow:
         taskState='O';
         info=F("PP:Reset");
         break;
-      case TaskError:
+      case F3BSpeedTask::TaskError:
         taskState='E';
         break;
-      case TaskFinished:
+      case F3BSpeedTask::TaskFinished:
         taskState='F';
         runSpeedTime=getSpeedTimeString(flightTime, F3B_TIME_NOT_SET, 0, 0, 0);
-        legTime1 = getLegTimeStr(ourSpeedTask.getLegTime(1), ourSpeedTask.getDeadDelay(2), ourSpeedTask.getDeadDistance(2));
-        legTime2 = getLegTimeStr(ourSpeedTask.getLegTime(2), ourSpeedTask.getDeadDelay(3), ourSpeedTask.getDeadDistance(3));
-        legTime3 = getLegTimeStr(ourSpeedTask.getLegTime(3), ourSpeedTask.getDeadDelay(4), ourSpeedTask.getDeadDistance(4));
-        legTime4 = getLegTimeStr(ourSpeedTask.getLegTime(4), ourSpeedTask.getDeadDelay(5), ourSpeedTask.getDeadDistance(5));
+        legTime1 = getLegTimeStr(ourF3BSpeedTask.getLegTime(1), ourF3BSpeedTask.getDeadDelay(F3BSpeedTask::B_LINE_CROSSED_1), ourF3BSpeedTask.getDeadDistance(F3BSpeedTask::B_LINE_CROSSED_1));
+        legTime2 = getLegTimeStr(ourF3BSpeedTask.getLegTime(2), ourF3BSpeedTask.getDeadDelay(F3BSpeedTask::A_LINE_CROSSED_1), ourF3BSpeedTask.getDeadDistance(F3BSpeedTask::A_LINE_CROSSED_1));
+        legTime3 = getLegTimeStr(ourF3BSpeedTask.getLegTime(3), ourF3BSpeedTask.getDeadDelay(4), ourF3BSpeedTask.getDeadDistance(4));
+        legTime4 = getLegTimeStr(ourF3BSpeedTask.getLegTime(4), ourF3BSpeedTask.getDeadDelay(5), ourF3BSpeedTask.getDeadDistance(5));
         info=F("");
         break;
       default:
@@ -1830,16 +1855,16 @@ void showF3BSpeedTask() {
     ourOLED.print(taskState);
     ourOLED.print(F("]"));
     
-    switch (ourSpeedTask.getTaskState()) {
-      case TaskWaiting:
-      case TaskRunning:
+    switch (ourF3BSpeedTask.getTaskState()) {
+      case F3BSpeedTask::TaskWaiting:
+      case F3BSpeedTask::TaskRunning:
         ourOLED.setFont(oledFontNormal);
         ourOLED.setCursor(10, 27);
         ourOLED.print(F("Task Time: "));
-        ourOLED.print(getTimeStr(ourSpeedTask.getTaskTime(), true));
+        ourOLED.print(getTimeStr(ourF3BSpeedTask.getRemainingTasktime(), true));
 
         break;
-      case TaskFinished:
+      case F3BSpeedTask::TaskFinished:
         ourOLED.setFont(oledFontNormal);
         ourOLED.setCursor(10, 27);
         ourOLED.print(F("Leg 1: "));
@@ -1885,11 +1910,11 @@ void updateOLED(unsigned long aNow, bool aForce) {
         case TC_F3FTask:
           showNotYetImplemented();
           break;
-        case TC_F3XOtaUpdate:
-          showUpdatePage();
-          break;
         case TC_F3XMessage:
           showMessagePage();
+          break;
+        case TC_F3BSpeedTasktime:
+          showF3BSpeedTasktime();
           break;
         case TC_F3XRadioChannel:
           showRadioChannelPage();
@@ -2000,7 +2025,7 @@ void perfCheck(void (*aExecute)(unsigned long), const char* aDescription, unsign
 }
 
 void updateSpeedTask(unsigned long aNow) {
- ourSpeedTask.update();
+ ourF3BSpeedTask.update();
 }
 
 void updateWebServer(unsigned long aNow) {
@@ -2051,31 +2076,30 @@ void updatePushButton(unsigned long aNow) {
       case TC_F3BSpeedTask:
         logMsg(INFO, F("button F3BSpeedTask"));
         reactOnMultiplePressed = history[buttonPressedCnt-1] + MULTI_PRESS_REACTION_TIME;
-        switch(ourSpeedTask.getTaskState()) {
-          case TaskWaiting:
-            ourSpeedTask.start();
+        switch(ourF3BSpeedTask.getTaskState()) {
+          case F3BSpeedTask::TaskWaiting:
+            ourF3BSpeedTask.start();
             ourContext.setTaskRunning(true);
             ourBuzzer.on(PinManager::SHORT); 
             break;
-          case TaskFinished:
-          case TaskTimeOverflow:
+          case F3BSpeedTask::TaskFinished:
+          case F3BSpeedTask::TaskTimeOverflow:
             ourContext.setTaskRunning(false);
-            ourSpeedTask.stop();
+            ourF3BSpeedTask.stop();
             logMsg(INFO, F("resetting task: F3BSpeedMenu"));
             resetRotaryEncoder();
             ourContext.set(TC_F3BSpeedMenu);
             CLEAR_HISTORY;
             MULTI_PRESSED_FINISHED;
             break;
-          case TaskRunning:
-            ourSpeedTask.signal(SignalA);
+          case F3BSpeedTask::TaskRunning:
+            ourF3BSpeedTask.signal(F3BSpeedTask::SignalA);
             break;
           default:
             break;
         }
         break;
       case TC_F3FTask: // button press
-      case TC_F3XOtaUpdate: // button press
       case TC_F3XMessage: // button press
       case TC_F3XInfo: // button press
       case TC_F3XRadioInfo: // button press
@@ -2090,12 +2114,18 @@ void updatePushButton(unsigned long aNow) {
         ourContext.set(TC_F3XSettingsMenu);
         resetRotaryEncoder((long) TC_F3XRadioPower);
         CLEAR_HISTORY;
+      case TC_F3BSpeedTasktime: // button press in F3B speed task time context
+        logMsg(LS_INTERNAL, INFO, F("set F3B speed tasktime :") + String(ourConfig.f3bSpeedTasktime));
+        ourF3BSpeedTask.setTasktime(ourConfig.f3bSpeedTasktime);
+        ourContext.set(TC_F3XSettingsMenu);
+        resetRotaryEncoder(0);
+        CLEAR_HISTORY;
+        break;
       case TC_F3XRadioChannel: // button press in radio channel context
         ourRadioSendSettings=true;
         logMsg(LS_INTERNAL, INFO, F("set RF24 Channel:") + String(ourRadioChannel));
-        // NYI
         ourContext.set(TC_F3XSettingsMenu);
-        resetRotaryEncoder((long) TC_F3XRadioChannel);
+        resetRotaryEncoder(2);
         CLEAR_HISTORY;
         break;
       case TC_F3XBaseMenu: {
@@ -2144,11 +2174,11 @@ void updatePushButton(unsigned long aNow) {
           case 0: // "0:Start Tasktime";
             logMsg(INFO, F("setting task: F3BSpeedTask"));
             ourContext.set(TC_F3BSpeedTask);
-            ourSpeedTask.start();
+            ourF3BSpeedTask.start();
             CLEAR_HISTORY;
             break;
           case 1: // "1:Back"
-            ourSpeedTask.stop();
+            ourF3BSpeedTask.stop();
             resetRotaryEncoder(0);
             ourContext.set(TC_F3XBaseMenu);
             break;
@@ -2159,7 +2189,12 @@ void updatePushButton(unsigned long aNow) {
         uint8_t menuPos =  getModulo(ourRotaryMenuPosition, ourSettingsMenuSize); // !! use the right size here
         logMsg(DEBUG, String(F("HW button pressed in F3XSettingsMenu -> setting menu context: ")) + String(menuPos));
         switch (menuPos){  // !! use the right size here !!
-          case 0: // "0:Buzzer on/off";
+          case 0: // "0:F3B Speed Tasktime";
+            ourBuzzer.on(PinManager::SHORT);
+            ourContext.set(TC_F3BSpeedTasktime);
+            resetRotaryEncoder();
+            break;
+          case 1: // "1:Buzzer on/off";
             if (ourBuzzer.isEnabled()) {
               ourBuzzer.disable();
             } else {
@@ -2167,7 +2202,7 @@ void updatePushButton(unsigned long aNow) {
             }
             ourBuzzer.on(PinManager::SHORT);
             break;
-          case 1: // "1:Radio channel";
+          case 2: // "2:Radio channel";
             ourBuzzer.on(PinManager::SHORT);
             if (!ourRadioSendSettings || ourRadioQuality > 99.0f) {
               ourContext.set(TC_F3XRadioChannel);
@@ -2178,7 +2213,7 @@ void updatePushButton(unsigned long aNow) {
               ourContext.setInfo(String(F("no B-Line connected")));
             }
             break;
-          case 2: // "2:Radio power";
+          case 3: // "3:Radio power";
             ourBuzzer.on(PinManager::SHORT);
             if (!ourRadioSendSettings || ourRadioQuality > 99.0f) {
               ourContext.set(TC_F3XRadioPower);
@@ -2189,12 +2224,12 @@ void updatePushButton(unsigned long aNow) {
               ourContext.setInfo(String(F("no B-Line connected")));
             }
             break;
-          case 3: // "3:Display invert";
+          case 4: // "4:Display invert";
             ourBuzzer.on(PinManager::SHORT);
             ourConfig.oledFlipped = ourConfig.oledFlipped == true? false: true;
             ourOLED.setFlipMode(ourConfig.oledFlipped);
             break;
-          case 4: // "4:Rotary button inv.";
+          case 5: // "5:Rotary button inv.";
             ourBuzzer.on(PinManager::SHORT);
             ourConfig.rotaryEncoderFlipped = ourConfig.rotaryEncoderFlipped ? false: true;
             ourREInversion = ourConfig.rotaryEncoderFlipped ? -1 : 1;
@@ -2208,23 +2243,23 @@ void updatePushButton(unsigned long aNow) {
               }
             }
             break;
-          case 5: //  "5:Update firmware";
+          case 6: //  "6:Update firmware";
             otaUpdate(false); // firmware
             break;
-          case 6: //  "6:Update filesystem";
+          case 7: //  "7:Update filesystem";
             otaUpdate(true); // filesystem
             break;
-          case 7: //  "7:WiFi on/off";
+          case 8: //  "8:WiFi on/off";
             WiFi.mode(WIFI_OFF) ; // client mode only
             ourConfig.wifiIsActive = !ourConfig.wifiIsActive;
             showDialog(2000, String(F("WiFi is ")) + (ourConfig.wifiIsActive ? String(F("enabled")) : String(F("disabled"))));
             break;
-          case 8: //  "8:Save settings";
+          case 9: //  "9:Save settings";
             ourBuzzer.on(PinManager::SHORT);
             saveConfig();
             showDialog(2000, String(F("Config saved ")));
             break;
-          case 9: // "9:Main menu";
+          case 10: // "10:Main menu";
             ourBuzzer.on(PinManager::SHORT);
             resetRotaryEncoder(ourContext.get());
             ourContext.set(TC_F3XBaseMenu);
@@ -2254,7 +2289,7 @@ void updatePushButton(unsigned long aNow) {
         case 3:
           switch (ourContext.get()) {
             case TC_F3BSpeedTask:
-              ourSpeedTask.stop();
+              ourF3BSpeedTask.stop();
               resetRotaryEncoder(0);
               controlRotaryEncoder(true);
               ourContext.back();
@@ -2356,11 +2391,11 @@ void updateRotaryEncoder(unsigned long aNow) {
         ourBuzzer.on(PinManager::SHORT);
         break;
       case TC_F3BSpeedTask:
-        switch(ourSpeedTask.getTaskState()) {
-          case TaskTimeOverflow:
-          case TaskWaiting:
-          case TaskFinished:
-            ourSpeedTask.stop();
+        switch(ourF3BSpeedTask.getTaskState()) {
+          case F3BSpeedTask::TaskTimeOverflow:
+          case F3BSpeedTask::TaskWaiting:
+          case F3BSpeedTask::TaskFinished:
+            ourF3BSpeedTask.stop();
             ourContext.set(TC_F3XBaseMenu);
             resetRotaryEncoder(TC_F3BSpeedTask);
             ourBuzzer.on(PinManager::SHORT);
@@ -2370,6 +2405,11 @@ void updateRotaryEncoder(unsigned long aNow) {
       case TC_F3XRadioChannel:
         ourRadioChannel += delta;
         ourRadioChannel = getModulo(ourRadioChannel, RF24_1MHZ_CHANNEL_NUM);
+        break;
+      case TC_F3BSpeedTasktime:
+        ourConfig.f3bSpeedTasktime += delta*30;
+        if (ourConfig.f3bSpeedTasktime < 60) ourConfig.f3bSpeedTasktime = 60;
+        if (ourConfig.f3bSpeedTasktime > 300) ourConfig.f3bSpeedTasktime = 300;
         break;
       case TC_F3XRadioPower:
         ourRadioPower += delta;
