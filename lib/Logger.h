@@ -15,11 +15,11 @@
 // LOGGING LOGGING
 enum LogSeverity {
   LS_START=0,
-  LS_INTERNAL,
   DEBUG,
   INFO,
   WARNING,
   ERROR,
+  LS_INTERNAL,
   LS_END
 };
 
@@ -41,6 +41,7 @@ class Logger {
       setModule(LOG_MOD_PERF);
       setModule(LOG_MOD_RTEST);
       setModule(LOG_MOD_RADIO);
+      setModule(0xFF);
       mySeverity=DEBUG;
       myDoSerialLogging=true;
     }
@@ -73,6 +74,8 @@ class Logger {
       if (aSeverity >= mySeverity) {
         log_printSecond();
         Serial.print(myApplication);
+        Serial.print(':');
+        Serial.print(aSeverity);
         Serial.print(':');
         Serial.print(aMessage);
         Serial.println();

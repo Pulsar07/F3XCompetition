@@ -28,10 +28,12 @@
 #include "PinManager.h"
 #include "LittleFS.h"
 #include "Config.h"
-#include "F3BSpeedTask.h"
+#include "F3XFixedDistanceTask.h"
 #include "settings.h"
 
-#define APP_VERSION "V029"
+#define USE_RXTX_AS_GPIO
+
+#define APP_VERSION "V030"
 
 /*
 Version History
@@ -44,6 +46,7 @@ Version History
  V027 15.03.2024: RS : Buzzer refactored to PinManager-class to support beep sequences for battery low warning
  V028 18.03.2024: RS : new speed start / back menu added
  V029 19.03.2024: RS : F3B Speed Tasktime is now a config item.
+ V030 28.03.2024: RS : Refactoring F3BSpeedTask -> F3XFixedDistanceTask, more consistent time strings and units (CSV)
 */
 
 /**
@@ -98,10 +101,12 @@ D10/TX : KY-040 Encoder - CLK
 #include <RFTransceiver.h>
 RFTransceiver ourRadio(myName, PIN_RF24_CE, PIN_RF24_CNS); // (CE, CSN)
 
-#define USE_RXTX_AS_GPIO
 
 
+#ifdef USE_RXTX_AS_GPIO
 Encoder ourRotaryEncoder(PIN_ENCODER_DT, PIN_ENCODER_CLK);
+#endif
+
 #define RE_MULITPLIER_SLOW 1
 #define RE_MULITPLIER_NORMAL 5
 long ourRotaryMenuPosition=0;
@@ -263,7 +268,7 @@ ESP8266WebServer ourWebServer(80);
 unsigned long ourSecond = 0;
 
 static configData_t ourConfig;
-F3BSpeedTask ourF3BSpeedTask;
+F3XFixedDistanceTask ourF3BSpeedTask(150, 4);
 unsigned long ourWlanRoundTripTime=0;
 unsigned long ourRadioRequestTime=0;
 float ourRadioRoundTripTime=0;
@@ -295,10 +300,12 @@ PinManager ourBuzzer(PIN_BUZZER_OUT);
 
 // =========== some function forward declarations ================
 
-char* getSpeedTimeString(unsigned long aTime, unsigned long aLegTime, uint16_t aLegSpeed,  unsigned long aDeadDelay, uint8_t aDeadDistance, char aSeparator='/', bool aForceDeadData=false);
+char* getLetTimeString(unsigned long aTime, unsigned long aLegTime, uint16_t aLegSpeed,  unsigned long aDeadDelay, uint8_t aDeadDistance, char aSeparator='/', bool aForceDeadData=false, bool aShowUnits=false);
 void updateOLED(unsigned long aNow, bool aForce);
 void updateOLED(unsigned long aNow);
+#ifdef USE_RXTX_AS_GPIO
 void resetRotaryEncoder(long aPos=0);
+#endif
 uint8_t getModulo(long aDivident, uint8_t aDivisor);
 void forceOLED(uint8_t aLevel, String aMessage);
 void forceOLED(String aHead, String aMessage);
@@ -353,6 +360,32 @@ class F3BTaskData {
           if(!file.print(line)){
             logMsg(LS_INTERNAL, String(F("cannot write protocol file: ")) + String(ourProtocolFilePath.c_str()));
           }
+          line = "\n";
+          line += ";";
+          line += "min:sec.msec;";
+          line += "km/h;";
+          line += "min:sec.msec;";
+          line += "min:sec.msec;";
+          line += "sec.msec;";
+          line += "km/h;";
+          line += "sec.msec;";
+          line += "meter;";
+          line += "min:sec.msec;";
+          line += "sec.msec;";
+          line += "km/h;";
+          line += "sec.msec;";
+          line += "meter;";
+          line += "min:sec.msec;";
+          line += "sec.msec;";
+          line += "km/h;";
+          line += "sec.msec;";
+          line += "meter;";
+          line += "min:sec.msec;";
+          line += "sec.msec;";
+          line += "km/h;";
+          if(!file.print(line)){
+            logMsg(LS_INTERNAL, String(F("cannot write protocol file: ")) + String(ourProtocolFilePath.c_str()));
+          }
         }
         file.close();
       } else {
@@ -370,20 +403,21 @@ class F3BTaskData {
         String line;
         line += "\n";
         line += "F3BSpeed;";
-        line += getSpeedTimeString(ourF3BSpeedTask.getFlightTime(F3BSpeedTask::A_LINE_CROSSED_FINAL), F3B_TIME_NOT_SET, 0, 0, 0);
+        line += getLetTimeString(ourF3BSpeedTask.getFlightTime(F3X_GFT_FINAL_TIME), F3X_TIME_NOT_SET, 0, 0, 0);
         line += ";";
         line += ourF3BSpeedTask.getFinalSpeed()*3.6f;
-        line += "km/h";
+        line += ";";
+        line += getLetTimeString(ourF3BSpeedTask.getFlightTime(0),F3X_TIME_NOT_SET,0,0,0,';');
         line += ";";
         
-        for (uint8_t i=0; i<5; i++) {
-        logMsg(LS_INTERNAL, String(F("leg data: ")) + String(i) + "/" + String(ourF3BSpeedTask.getLegSpeed(i)*3.6f));
-          line += getSpeedTimeString(
+        for (uint8_t i=0; i<ourF3BSpeedTask.getLegNumberMax(); i++) { // 0..3
+          F3XLeg leg = ourF3BSpeedTask.getLeg(i);
+          line += getLetTimeString(
                     ourF3BSpeedTask.getFlightTime(i+1), 
-                    ourF3BSpeedTask.getLegTime(i), 
-                    ourF3BSpeedTask.getLegSpeed(i)*3.6f, 
-                    ourF3BSpeedTask.getDeadDelay(i+1),
-                    ourF3BSpeedTask.getDeadDistance(i+1), ';', (i==0||i==4)?false:true);
+                    leg.time,
+                    leg.speed*3.6f, 
+                    leg.deadTime,
+                    leg.deadDistance, ';', (i==3)?false:true, false);
           if (i != 4) {
             line += ";";
           }
@@ -410,7 +444,7 @@ void restartMCs(uint16_t aDelay, bool aRestartOnlyBLine=false) {
 void reactonSignalA() {
   ourBuzzer.on(500);
   logMsg(DEBUG, "reactonSignalA");
-  if (ourF3BSpeedTask.getTaskState() == F3BSpeedTask::TaskFinished) {
+  if (ourF3BSpeedTask.getTaskState() == F3XFixedDistanceTask::TaskFinished) {
     ourF3BTaskData.writeData();
   }
 }
@@ -419,12 +453,13 @@ void reactonSignalB() {
   logMsg(DEBUG, "reactonSignalB");
 }
 
+
 /**
-  return a time literal with the format 12.23s/43m  
+  return a leg time literal with the format 12.23s/43m  
 */
 char* getLegTimeStr(unsigned long aLegTime,  unsigned long aDelay, uint8_t aDistance, char aSeparator='/') {
   static char buffer[25];
-  if (aLegTime != F3B_TIME_NOT_SET) {
+  if (aLegTime != F3X_TIME_NOT_SET) {
     sprintf(&buffer[0],"%02d.%02ds", aLegTime / 1000, aLegTime/10%100); // len=8+7=15
   }
   if (aDelay != 0) {
@@ -434,11 +469,11 @@ char* getLegTimeStr(unsigned long aLegTime,  unsigned long aDelay, uint8_t aDist
 }
 
 /**
-  return a time literal in format 
+  return a leg time literal in format 
     00:09.41;05.39s;100km/h;00.76s;21m;
     representing turn-time/leg-time/leg-speed/dead-time/dead-distance 
 */
-char* getSpeedTimeString(unsigned long aTime, unsigned long aLegTime, uint16_t aLegSpeed,  unsigned long aDeadDelay, uint8_t aDeadDistance, char aSeparator, bool aForceDeadData) {
+char* getLetTimeString(unsigned long aTime, unsigned long aLegTime, uint16_t aLegSpeed,  unsigned long aDeadDelay, uint8_t aDeadDistance, char aSeparator, bool aForceDeadData, bool aShowUnits) {
   int tseconds = aTime / 1000;
   int tminutes = tseconds / 60;
   int thours = tminutes / 60;
@@ -447,29 +482,62 @@ char* getSpeedTimeString(unsigned long aTime, unsigned long aLegTime, uint16_t a
   int seconds = tseconds % 60;
   int minutes = tminutes % 60;
   static char buffer[35];
-  if (aTime == F3B_TIME_NOT_SET ) {
-    if (ourF3BSpeedTask.getTaskState() == F3BSpeedTask::TaskTimeOverflow) {
+  String format;
+  if (aTime == F3X_TIME_NOT_SET ) {
+    if (ourF3BSpeedTask.getTaskState() == F3XFixedDistanceTask::TaskTimeOverflow) {
       sprintf(&buffer[0],"XX:XX.XX : task time overflow");  // len=29+1
     } else {
       sprintf(&buffer[0],"__:__.__");
     }
   } else {
-    sprintf(&buffer[0],"%02d:%02d.%02d", minutes, seconds, centies);  // len=8
-    if (aLegTime != F3B_TIME_NOT_SET) {
+    format = F("%02d:%02d.%02d");
+    if (aShowUnits) {
+      format = F("%02d:%02d.%02dm:s:ms");
+    }
+    sprintf(&buffer[0],format.c_str(), minutes, seconds, centies);  // len=8
+    if (aLegTime != F3X_TIME_NOT_SET) {
       if (aLegSpeed > 0) {
-        sprintf(&buffer[strlen(buffer)],"%c%02d.%02ds%c%dkm/h", aSeparator, aLegTime / 1000, aLegTime/10%100, aSeparator, aLegSpeed ); // len=8+15=23
+        format = F("%c%02d.%02d%c%d");
+        if (aShowUnits) {
+          format = F("%c%02d.%02ds%c%dkm/h");
+        }
+        sprintf(&buffer[strlen(buffer)], format.c_str(), aSeparator, aLegTime / 1000, aLegTime/10%100, aSeparator, aLegSpeed ); // len=8+15=23
       } else {
-        sprintf(&buffer[strlen(buffer)],"%c%02d.%02ds", aSeparator, aLegTime / 1000, aLegTime/10%100); // len=8+7=15
+        format = F("%c%02d.%02d");
+        if (aShowUnits) {
+          format = F("%c%02d.%02ds");
+        }
+        sprintf(&buffer[strlen(buffer)], format.c_str(), aSeparator, aLegTime / 1000, aLegTime/10%100); // len=8+7=15
       }
     }
     if (aDeadDelay != 0 || aForceDeadData) {
-      sprintf(&buffer[strlen(buffer)],"%c%02d.%02ds%c%dm", aSeparator, aDeadDelay / 1000, aDeadDelay/10%100, aSeparator, aDeadDistance); // len=23+8=31+1
+      format = F("%c%02d.%02d%c%d");
+      if (aShowUnits) {
+        format = F("%c%02d.%02ds%c%dm");
+      }
+      sprintf(&buffer[strlen(buffer)], format.c_str(), aSeparator, aDeadDelay / 1000, aDeadDelay/10%100, aSeparator, aDeadDistance); // len=23+8=31+1
     }
   }
   return buffer;
 }
 
-char* getTimeStr(unsigned long aTime, boolean aShort=false) {
+/**
+  return a time literal with the format Seconds.Centies 12.23s
+*/
+char* getSCTimeStr(unsigned long aTime, bool aShowUnit=false ) {
+  static char buffer[10];
+  String format= F("%02d.%02d");
+  if (aShowUnit) {
+    format= F("%02d.%02ds");
+  }
+  sprintf(&buffer[0],format.c_str(), aTime/1000, aTime/10%100); 
+  return buffer;
+}
+
+/**
+  return a time literal with the format Hours:Minutes:Seconds 00:12:23
+*/
+char* getHMSTimeStr(unsigned long aTime, boolean aShort=false) {
   int tseconds = aTime / 1000;
   int tminutes = tseconds / 60;
   int thours = tminutes / 60;
@@ -479,7 +547,7 @@ char* getTimeStr(unsigned long aTime, boolean aShort=false) {
   int hours = thours % 60;
   static char buffer[12];
   if (aShort) {
-    if (aTime == F3B_TIME_NOT_SET ) {
+    if (aTime == F3X_TIME_NOT_SET ) {
       sprintf(buffer,"__:__");
     } else {
       sprintf(buffer,"%02d:%02d", minutes, seconds); 
@@ -682,11 +750,11 @@ void setWebDataReq() {
   // general settings stuff
   if (name == F("signal_a")) {
     logMsg(INFO, F("signal A event from web client"));
-    ourF3BSpeedTask.signal(F3BSpeedTask::SignalA);
+    ourF3BSpeedTask.signal(F3XFixedDistanceTask::SignalA);
   } else
   if (name == F("signal_b")) {
     logMsg(INFO, F("signal B event from web client"));
-    ourF3BSpeedTask.signal(F3BSpeedTask::SignalB);
+    ourF3BSpeedTask.signal(F3XFixedDistanceTask::SignalB);
   } else 
   if (name == F("stop_task")) {
     logMsg(INFO, F("stop task event from web client"));
@@ -813,7 +881,7 @@ void setWebDataReq() {
 
 void getWebHeaderData(String* aReturnString, boolean aForce=false) {
 
-  *aReturnString += String(F("id_time=")) + getTimeStr(millis()) + MYSEP_STR;
+  *aReturnString += String(F("id_time=")) + getHMSTimeStr(millis()) + MYSEP_STR;
 
   static long web_rssi = 0;
   if (WiFi.RSSI() != web_rssi || aForce) {
@@ -846,27 +914,28 @@ void getWebHeaderData(String* aReturnString, boolean aForce=false) {
 void getF3BSpeedWebData(String* aReturnString, boolean aForce=false) {
   String taskstr;
 
-  static F3BSpeedTask::State webTaskState = F3BSpeedTask::TaskNotSet;
+  static F3XFixedDistanceTask::State webTaskState = F3XFixedDistanceTask::TaskNotSet;
   if (ourF3BSpeedTask.getTaskState() != webTaskState || aForce) {
     webTaskState = ourF3BSpeedTask.getTaskState();
     switch (ourF3BSpeedTask.getTaskState()) {
-      case F3BSpeedTask::TaskWaiting:
+      case F3XFixedDistanceTask::TaskWaiting:
         *aReturnString += String(F("id_running_speed_time="))
-                      + getSpeedTimeString(F3B_TIME_NOT_SET, F3B_TIME_NOT_SET, 0, 0, 0)
+                      + getLetTimeString(F3X_TIME_NOT_SET, F3X_TIME_NOT_SET, 0, 0, 0,'/', false)
                       + MYSEP_STR;
         taskstr = F("Ready, waiting for START speed task");
         break;
-      case F3BSpeedTask::TaskRunning:
+      case F3XFixedDistanceTask::TaskRunning:
         taskstr = F("task started, signals will be handled");
         break;
-      case F3BSpeedTask::TaskTimeOverflow:
+      case F3XFixedDistanceTask::TaskTimeOverflow:
         taskstr = String(F("task stopped, task time overflow"));
         break;
-      case F3BSpeedTask::TaskFinished:
+      case F3XFixedDistanceTask::TaskFinished:
         taskstr = F("task finished!");
         break;
       default:
-        taskstr = F("ERROR: program problem 003");
+        taskstr = F("ERROR: program problem 003:");
+        taskstr += String(ourF3BSpeedTask.getTaskState());
         break;
     }
     *aReturnString += String(F("id_speed_task_state=")) + taskstr + MYSEP_STR;
@@ -874,63 +943,62 @@ void getF3BSpeedWebData(String* aReturnString, boolean aForce=false) {
   int fromTimer=0;
   int numTimer=0;
   if (aForce) {
+    // logMsg(DEBUG, F("getF3BSpeedWebData: forced")); 
     fromTimer = 0;
     numTimer = 5;
   } else
-  if (ourF3BSpeedTask.getTaskState() == F3BSpeedTask::TaskWaiting ) {
+  if (ourF3BSpeedTask.getTaskState() == F3XFixedDistanceTask::TaskWaiting ) {
+    // logMsg(DEBUG, F("getF3BSpeedWebData: task waiting")); 
     numTimer = 5;
   } else
-  if (ourF3BSpeedTask.getTaskState() == F3BSpeedTask::TaskTimeOverflow ) {
-    fromTimer = ourF3BSpeedTask.getProgress()+1;
+  if (ourF3BSpeedTask.getTaskState() == F3XFixedDistanceTask::TaskTimeOverflow ) {
+    // logMsg(DEBUG, F("getF3BSpeedWebData: task time overflow")); 
+    fromTimer = ourF3BSpeedTask.getSignalledLegCount()+1;
     numTimer = 5-fromTimer;
   } else
-  if (ourF3BSpeedTask.getTaskState() == F3BSpeedTask::TaskRunning || ourF3BSpeedTask.getTaskState() == F3BSpeedTask::TaskFinished ) {
-    switch(ourF3BSpeedTask.getProgress()) {
-// AL_REV      case A_LINE_CROSSED_1:
-// AL_REV        // in case of A_LINE_CROSSED_1, send also the A_LINE_REVERSED signal
-// AL_REV        // due to possible reflight 
-// AL_REV        fromTimer=A_LINE_REVERSED;
-// AL_REV        numTimer = 2;
-// AL_REV        break;
-      case F3BSpeedTask::NOT_STARTED:
+  if (ourF3BSpeedTask.getTaskState() == F3XFixedDistanceTask::TaskRunning || ourF3BSpeedTask.getTaskState() == F3XFixedDistanceTask::TaskFinished ) {
+    // logMsg(DEBUG, F("getF3BSpeedWebData: running | finished")); 
+    switch(ourF3BSpeedTask.getSignalledLegCount()) {
+      case F3X_PROGRESS_NOT_STARTED:
+        // logMsg(DEBUG, F("getF3BSpeedWebData: --> F3X_PROGRESS_NOT_STARTED")); 
         // send all timer
         fromTimer=0;
         numTimer = 5;
         break;
       default:
         // send the current timer
-        fromTimer = max(ourF3BSpeedTask.getProgress()-1, 0);
+        // logMsg(DEBUG, F("getF3BSpeedWebData: --> default")); 
+        fromTimer = max(ourF3BSpeedTask.getSignalledLegCount()-1, 0);
         numTimer = 2;
         break;
     }
   }
   taskstr="";
+  // logMsg(DEBUG, String(F("getF3BSpeedWebData: --> for ")) + String(fromTimer) + "/" + String(fromTimer+numTimer) ); 
   for (int i=fromTimer; i<fromTimer+numTimer; i++) {
+    F3XLeg leg = ourF3BSpeedTask.getLeg(i-1);
     taskstr += String(F("id_speed_time_")) 
               + String(i) + F("=") 
-                  + getSpeedTimeString(
-                      ourF3BSpeedTask.getFlightTime(i), 
-                      ourF3BSpeedTask.getLegTime(i-1), 
-                      ourF3BSpeedTask.getLegSpeed(i-1)*3.6f, 
-                      ourF3BSpeedTask.getDeadDelay(i),
-                      ourF3BSpeedTask.getDeadDistance(i))
+                  + getLetTimeString(
+                      ourF3BSpeedTask.getFlightTime(i),  // for the i.th signal
+                      leg.time,
+                      leg.speed*3.6f,
+                      leg.deadTime,
+                      leg.deadDistance)
               + MYSEP_STR;
   }
   if (taskstr.length() > 0) {
     *aReturnString += taskstr;
   }
 
-  *aReturnString += String(F("id_speed_task_time=")) + getTimeStr(ourF3BSpeedTask.getRemainingTasktime(), true) + MYSEP_STR;
-  if (ourF3BSpeedTask.getProgress() == F3BSpeedTask::A_LINE_CROSSED_FINAL) {
+  *aReturnString += String(F("id_speed_task_time=")) + getHMSTimeStr(ourF3BSpeedTask.getRemainingTasktime(), true) + MYSEP_STR;
+  if (ourF3BSpeedTask.getSignalledLegCount() == ourF3BSpeedTask.getLegNumberMax()) {
+    // logMsg(DEBUG, String(F("getF3BSpeedWebData: F3X_GFT_RUNNING_TIME ")) + String(ourF3BSpeedTask.getFlightTime(F3X_GFT_RUNNING_TIME))); 
     *aReturnString += String(F("id_running_speed_time="))
-                  + getSpeedTimeString(ourF3BSpeedTask.getFlightTime(F3BSpeedTask::RUNNING_VALUE), F3B_TIME_NOT_SET, 0, 0, 0)
+                  + getLetTimeString(ourF3BSpeedTask.getFlightTime(F3X_GFT_RUNNING_TIME), F3X_TIME_NOT_SET, 0, 0, 0)
                   + MYSEP_STR;
   }
 }
-
-// void getProtocolReq() {
-  // ourWebServer.send(200, F("text/html"), response.c_str()); 
-// }
 
 void getWebLogReq() {
   String response;
@@ -1053,15 +1121,15 @@ void getWebDataReq() {
       response += pushData;
     } else
     if (argName.equals(F("id_running_speed_time"))) {
-      if (ourF3BSpeedTask.getTaskState() == F3BSpeedTask::TaskRunning ) {
+      if (ourF3BSpeedTask.getTaskState() == F3XFixedDistanceTask::TaskRunning ) {
         String resp;
-        if (ourF3BSpeedTask.getProgress() >= F3BSpeedTask::A_LINE_CROSSED_1) {
+        if (ourF3BSpeedTask.getSignalledLegCount() >= 0) {
           resp = String(F("id_running_speed_time="))
-                    + getSpeedTimeString(ourF3BSpeedTask.getFlightTime(F3BSpeedTask::RUNNING_VALUE), F3B_TIME_NOT_SET, 0, 0, 0)
+                    + getLetTimeString(ourF3BSpeedTask.getFlightTime(F3X_GFT_RUNNING_TIME), F3X_TIME_NOT_SET, 0, 0, 0)
                     + MYSEP_STR;
         } else {
           resp = String(F("id_running_speed_time="))
-                    + getSpeedTimeString(F3B_TIME_NOT_SET, F3B_TIME_NOT_SET, 0, 0, 0)
+                    + getLetTimeString(F3X_TIME_NOT_SET, F3X_TIME_NOT_SET, 0, 0, 0)
                     + MYSEP_STR;
         }
         logMsg(LOG_MOD_HTTP, DEBUG, resp);
@@ -1314,6 +1382,9 @@ void setupSerial() {
 void setupLog(const char* aName) {
   Logger::getInstance().setup(aName);
   Logger::getInstance().doSerialLogging(SERIAL_LOG);
+  if (SERIAL_LOG) {
+    logMsg(INFO, F("serial loggin enabled"));
+  }
 }
 
 // config in EEPROM
@@ -1426,7 +1497,9 @@ void setup() {
   delay(1000);
   ourContext.set(TC_F3XBaseMenu);
   ourContext.set(TC_F3XInfo);
+  #ifdef USE_RXTX_AS_GPIO
   resetRotaryEncoder(TC_F3XBaseMenu);
+  #endif
 }
 
 void updateRadio(unsigned long aNow) {
@@ -1458,7 +1531,7 @@ void updateRadio(unsigned long aNow) {
         id = arg->toInt();
         if (id != LastId) { 
           logMsg(INFO, F("Signal-B received"));
-          ourF3BSpeedTask.signal(F3BSpeedTask::SignalB);
+          ourF3BSpeedTask.signal(F3XFixedDistanceTask::SignalB);
         } else {
           logMsg(WARNING, F("Signal-B retarded"));
         }
@@ -1768,71 +1841,70 @@ void showNotYetImplemented() {
 
 void showF3BSpeedTask() {
   static unsigned long lastFT = 0;
-  unsigned long flightTime = ourF3BSpeedTask.getFlightTime(F3BSpeedTask::RUNNING_VALUE);
+  unsigned long flightTime = ourF3BSpeedTask.getFlightTime(F3X_GFT_RUNNING_TIME);
   
 
   String runSpeedTime;
   String taskTime;
-  String legTime1, legTime2, legTime3, legTime4;
-  legTime1 = legTime2 = legTime3 = legTime4 = String(F(""));
-  runSpeedTime = getSpeedTimeString(F3B_TIME_NOT_SET, F3B_TIME_NOT_SET, 0, 0, 0);
+  String legTimeStr[4];
+  // runSpeedTime = getLetTimeString(F3X_TIME_NOT_SET, F3X_TIME_NOT_SET, 0, 0, 0,'/', false, true);
+  runSpeedTime = getSCTimeStr(0UL, true);
   String info;
 
   char taskState='?';
-  if (flightTime != lastFT || ourF3BSpeedTask.getTaskState() != F3BSpeedTask::TaskRunning) {
+  if (flightTime != lastFT || ourF3BSpeedTask.getTaskState() != F3XFixedDistanceTask::TaskRunning) {
     lastFT = flightTime;
     switch (ourF3BSpeedTask.getTaskState()) {
-      case F3BSpeedTask::TaskRunning:
+      case F3XFixedDistanceTask::TaskRunning:
         taskState='R';
-        if (ourF3BSpeedTask.getProgress() >=0) {
-          taskState= ourF3BSpeedTask.getProgress() +'0';
+        if (ourF3BSpeedTask.getSignalledLegCount() >=0) {
+          taskState= ourF3BSpeedTask.getSignalledLegCount() +'0';
         }
-        switch (ourF3BSpeedTask.getProgress()) {
-          case F3BSpeedTask::NOT_STARTED:
-// AL_REV            info=F("P:A-Line rev Cross");
-// AL_REV            break;
-// AL_REV          case A_LINE_REVERSED:
-            info=F("P:1.A crossing");
+        switch (ourF3BSpeedTask.getSignalledLegCount()) {
+          case F3X_PROGRESS_NOT_STARTED:
+            info=F("next Press:1.A crossing");
             break;
-          case F3BSpeedTask::A_LINE_CROSSED_1:
-            info=F("P:1.B turn/1.A cross ");
+          case 0: // A-line crossed 1.time = 0m
+            info=F("next Press:1.B turn/1.A cross ");
             break;
-          case F3BSpeedTask::B_LINE_CROSSED_1:
-            info=F("P:1.A turn");
+          case 1: // B-Line crossed 1.time = 150m
+            info=F("next Press:1.A turn");
             break;
-          case F3BSpeedTask::A_LINE_CROSSED_2:
-            info=F("P:2.B turn");
+          case 2: // A-line crossed 2.time = 300m
+            info=F("next Press:2.B turn");
             break;
-          case F3BSpeedTask::B_LINE_CROSSED_2:
-            info=F("P:A final cross");
+          case 3: // B-line crossed 2.time = 450m
+            info=F("next Press:A final cross");
             break;
           default:
             info=F("P:---");
             break;
         }
        
-        if (ourF3BSpeedTask.getProgress() >= F3BSpeedTask::A_LINE_CROSSED_1) {
-          runSpeedTime=getSpeedTimeString(flightTime, F3B_TIME_NOT_SET, 0, 0, 0);
+        if (ourF3BSpeedTask.getSignalledLegCount() > F3X_PROGRESS_NOT_STARTED) {
+          // runSpeedTime=getLetTimeString(flightTime, F3X_TIME_NOT_SET, 0, 0, 0,'/', false, true);
+          runSpeedTime = getSCTimeStr(flightTime, true);
         }
         break;
-      case F3BSpeedTask::TaskWaiting:
+      case F3XFixedDistanceTask::TaskWaiting:
         taskState='W';
         info=F("P:Start Tasktime");
         break;
-      case F3BSpeedTask::TaskTimeOverflow:
+      case F3XFixedDistanceTask::TaskTimeOverflow:
         taskState='O';
         info=F("PP:Reset");
         break;
-      case F3BSpeedTask::TaskError:
+      case F3XFixedDistanceTask::TaskError:
         taskState='E';
         break;
-      case F3BSpeedTask::TaskFinished:
+      case F3XFixedDistanceTask::TaskFinished:
         taskState='F';
-        runSpeedTime=getSpeedTimeString(flightTime, F3B_TIME_NOT_SET, 0, 0, 0);
-        legTime1 = getLegTimeStr(ourF3BSpeedTask.getLegTime(1), ourF3BSpeedTask.getDeadDelay(F3BSpeedTask::B_LINE_CROSSED_1), ourF3BSpeedTask.getDeadDistance(F3BSpeedTask::B_LINE_CROSSED_1));
-        legTime2 = getLegTimeStr(ourF3BSpeedTask.getLegTime(2), ourF3BSpeedTask.getDeadDelay(F3BSpeedTask::A_LINE_CROSSED_1), ourF3BSpeedTask.getDeadDistance(F3BSpeedTask::A_LINE_CROSSED_1));
-        legTime3 = getLegTimeStr(ourF3BSpeedTask.getLegTime(3), ourF3BSpeedTask.getDeadDelay(4), ourF3BSpeedTask.getDeadDistance(4));
-        legTime4 = getLegTimeStr(ourF3BSpeedTask.getLegTime(4), ourF3BSpeedTask.getDeadDelay(5), ourF3BSpeedTask.getDeadDistance(5));
+        // runSpeedTime=getLetTimeString(flightTime, F3X_TIME_NOT_SET, 0, 0, 0);
+        runSpeedTime = getSCTimeStr(flightTime, true);
+        for (int i=0; i < 4; i++) {
+          F3XLeg leg = ourF3BSpeedTask.getLeg(i);
+          legTimeStr[i] = getLegTimeStr(leg.time, leg.deadTime, leg.deadDistance);
+        }
         info=F("");
         break;
       default:
@@ -1843,7 +1915,7 @@ void showF3BSpeedTask() {
     // OLED 128x64
     ourOLED.setFont(oledFontNormal);
     ourOLED.setCursor(0, 12);
-    ourOLED.print(F("F3B Speed: "));
+    ourOLED.print(F("F3B Speed:"));
     ourOLED.setFont(oledFontBig);
     ourOLED.print(runSpeedTime);
 
@@ -1856,28 +1928,28 @@ void showF3BSpeedTask() {
     ourOLED.print(F("]"));
     
     switch (ourF3BSpeedTask.getTaskState()) {
-      case F3BSpeedTask::TaskWaiting:
-      case F3BSpeedTask::TaskRunning:
+      case F3XFixedDistanceTask::TaskWaiting:
+      case F3XFixedDistanceTask::TaskRunning:
         ourOLED.setFont(oledFontNormal);
         ourOLED.setCursor(10, 27);
         ourOLED.print(F("Task Time: "));
-        ourOLED.print(getTimeStr(ourF3BSpeedTask.getRemainingTasktime(), true));
+        ourOLED.print(getHMSTimeStr(ourF3BSpeedTask.getRemainingTasktime(), true));
 
         break;
-      case F3BSpeedTask::TaskFinished:
+      case F3XFixedDistanceTask::TaskFinished:
         ourOLED.setFont(oledFontNormal);
         ourOLED.setCursor(10, 27);
         ourOLED.print(F("Leg 1: "));
-        ourOLED.print(legTime1);
+        ourOLED.print(legTimeStr[0]);
         ourOLED.setCursor(10, 39);
         ourOLED.print(F("Leg 2: "));
-        ourOLED.print(legTime2);
+        ourOLED.print(legTimeStr[1]);
         ourOLED.setCursor(10, 51);
         ourOLED.print(F("Leg 3: "));
-        ourOLED.print(legTime3);
+        ourOLED.print(legTimeStr[2]);
         ourOLED.setCursor(10, 63);
         ourOLED.print(F("Leg 4: "));
-        ourOLED.print(legTime4);
+        ourOLED.print(legTimeStr[3]);
         break;
     }
   }
@@ -2016,6 +2088,7 @@ void perfCheck(void (*aExecute)(unsigned long), const char* aDescription, unsign
   #ifdef PERF_DEBUG
   unsigned long start = millis();
   #endif
+  // logMsg(LOG_MOD_PERF, DEBUG, String(F("execute ")) + aDescription);
   aExecute(aNow);
   #ifdef PERF_DEBUG
   if ((millis() - start) > 100) {
@@ -2077,23 +2150,25 @@ void updatePushButton(unsigned long aNow) {
         logMsg(INFO, F("button F3BSpeedTask"));
         reactOnMultiplePressed = history[buttonPressedCnt-1] + MULTI_PRESS_REACTION_TIME;
         switch(ourF3BSpeedTask.getTaskState()) {
-          case F3BSpeedTask::TaskWaiting:
+          case F3XFixedDistanceTask::TaskWaiting:
             ourF3BSpeedTask.start();
             ourContext.setTaskRunning(true);
             ourBuzzer.on(PinManager::SHORT); 
             break;
-          case F3BSpeedTask::TaskFinished:
-          case F3BSpeedTask::TaskTimeOverflow:
+          case F3XFixedDistanceTask::TaskFinished:
+          case F3XFixedDistanceTask::TaskTimeOverflow:
             ourContext.setTaskRunning(false);
             ourF3BSpeedTask.stop();
             logMsg(INFO, F("resetting task: F3BSpeedMenu"));
+            #ifdef USE_RXTX_AS_GPIO
             resetRotaryEncoder();
+            #endif
             ourContext.set(TC_F3BSpeedMenu);
             CLEAR_HISTORY;
             MULTI_PRESSED_FINISHED;
             break;
-          case F3BSpeedTask::TaskRunning:
-            ourF3BSpeedTask.signal(F3BSpeedTask::SignalA);
+          case F3XFixedDistanceTask::TaskRunning:
+            ourF3BSpeedTask.signal(F3XFixedDistanceTask::SignalA);
             break;
           default:
             break;
@@ -2112,20 +2187,26 @@ void updatePushButton(unsigned long aNow) {
         ourRadioSendSettings=true;
         logMsg(LS_INTERNAL, INFO, F("set RF24 Power:") + String(ourRadioPower));
         ourContext.set(TC_F3XSettingsMenu);
+        #ifdef USE_RXTX_AS_GPIO
         resetRotaryEncoder((long) TC_F3XRadioPower);
+        #endif
         CLEAR_HISTORY;
       case TC_F3BSpeedTasktime: // button press in F3B speed task time context
         logMsg(LS_INTERNAL, INFO, F("set F3B speed tasktime :") + String(ourConfig.f3bSpeedTasktime));
         ourF3BSpeedTask.setTasktime(ourConfig.f3bSpeedTasktime);
         ourContext.set(TC_F3XSettingsMenu);
+        #ifdef USE_RXTX_AS_GPIO
         resetRotaryEncoder(0);
+        #endif
         CLEAR_HISTORY;
         break;
       case TC_F3XRadioChannel: // button press in radio channel context
         ourRadioSendSettings=true;
         logMsg(LS_INTERNAL, INFO, F("set RF24 Channel:") + String(ourRadioChannel));
         ourContext.set(TC_F3XSettingsMenu);
+        #ifdef USE_RXTX_AS_GPIO
         resetRotaryEncoder(2);
+        #endif
         CLEAR_HISTORY;
         break;
       case TC_F3XBaseMenu: {
@@ -2135,7 +2216,9 @@ void updatePushButton(unsigned long aNow) {
             case 0: // "0:F3B-Speedtask";
               ourBuzzer.on(PinManager::SHORT); 
               logMsg(INFO, F("setting task: F3BSpeedMenu"));
-              resetRotaryEncoder();
+              #ifdef USE_RXTX_AS_GPIO
+              resetRotaryEncoder(2);
+              #endif
               ourContext.set(TC_F3BSpeedMenu);
               CLEAR_HISTORY;
               break;
@@ -2161,7 +2244,9 @@ void updatePushButton(unsigned long aNow) {
               ourBuzzer.on(PinManager::SHORT); 
               logMsg(INFO, F("setting task: F3XSettingsMenu"));
               ourContext.set(TC_F3XSettingsMenu);
+              #ifdef USE_RXTX_AS_GPIO
               resetRotaryEncoder();
+              #endif
               CLEAR_HISTORY;
               break;
           }
@@ -2179,7 +2264,9 @@ void updatePushButton(unsigned long aNow) {
             break;
           case 1: // "1:Back"
             ourF3BSpeedTask.stop();
+            #ifdef USE_RXTX_AS_GPIO
             resetRotaryEncoder(0);
+            #endif
             ourContext.set(TC_F3XBaseMenu);
             break;
           }
@@ -2192,7 +2279,9 @@ void updatePushButton(unsigned long aNow) {
           case 0: // "0:F3B Speed Tasktime";
             ourBuzzer.on(PinManager::SHORT);
             ourContext.set(TC_F3BSpeedTasktime);
+            #ifdef USE_RXTX_AS_GPIO
             resetRotaryEncoder();
+            #endif
             break;
           case 1: // "1:Buzzer on/off";
             if (ourBuzzer.isEnabled()) {
@@ -2207,7 +2296,9 @@ void updatePushButton(unsigned long aNow) {
             if (!ourRadioSendSettings || ourRadioQuality > 99.0f) {
               ourContext.set(TC_F3XRadioChannel);
               ourRadioChannel = ourRadio.getChannel();
+              #ifdef USE_RXTX_AS_GPIO
               resetRotaryEncoder();
+              #endif
             } else {
               ourContext.set(TC_F3XMessage);
               ourContext.setInfo(String(F("no B-Line connected")));
@@ -2218,7 +2309,9 @@ void updatePushButton(unsigned long aNow) {
             if (!ourRadioSendSettings || ourRadioQuality > 99.0f) {
               ourContext.set(TC_F3XRadioPower);
               ourRadioPower=ourRadio.getPower();
+              #ifdef USE_RXTX_AS_GPIO
               resetRotaryEncoder();
+              #endif
             } else {
               ourContext.set(TC_F3XMessage);
               ourContext.setInfo(String(F("no B-Line connected")));
@@ -2233,6 +2326,7 @@ void updatePushButton(unsigned long aNow) {
             ourBuzzer.on(PinManager::SHORT);
             ourConfig.rotaryEncoderFlipped = ourConfig.rotaryEncoderFlipped ? false: true;
             ourREInversion = ourConfig.rotaryEncoderFlipped ? -1 : 1;
+            #ifdef USE_RXTX_AS_GPIO
             {
               for (uint8_t i = 0; i < 254; i++) {
                 ourRotaryEncoder.write(i);
@@ -2242,6 +2336,7 @@ void updatePushButton(unsigned long aNow) {
                 }
               }
             }
+            #endif
             break;
           case 6: //  "6:Update firmware";
             otaUpdate(false); // firmware
@@ -2261,7 +2356,9 @@ void updatePushButton(unsigned long aNow) {
             break;
           case 10: // "10:Main menu";
             ourBuzzer.on(PinManager::SHORT);
-            resetRotaryEncoder(ourContext.get());
+            #ifdef USE_RXTX_AS_GPIO
+            resetRotaryEncoder();
+            #endif
             ourContext.set(TC_F3XBaseMenu);
             break;
           }
@@ -2273,9 +2370,13 @@ void updatePushButton(unsigned long aNow) {
     
     if (reactOnMultiplePressed) {
       // while multi button handling is in progress do not react on rotary changes
+      #ifdef USE_RXTX_AS_GPIO
       controlRotaryEncoder(false);
+      #endif
     } else {
+      #ifdef USE_RXTX_AS_GPIO
       controlRotaryEncoder(true);
+      #endif
       CLEAR_HISTORY;
     }
   
@@ -2290,8 +2391,10 @@ void updatePushButton(unsigned long aNow) {
           switch (ourContext.get()) {
             case TC_F3BSpeedTask:
               ourF3BSpeedTask.stop();
+              #ifdef USE_RXTX_AS_GPIO
               resetRotaryEncoder(0);
               controlRotaryEncoder(true);
+              #endif
               ourContext.back();
               MULTI_PRESSED_FINISHED;
             break;
@@ -2337,6 +2440,7 @@ double irr_low_pass_filter(double aSmoothedValue, double aCurrentValue, double a
 } 
 
 
+#ifdef USE_RXTX_AS_GPIO
 void resetRotaryEncoder(long aPos) {
   ourRotaryEncoder.write(aPos);
   ourREOldPos = LONG_MIN;
@@ -2392,9 +2496,9 @@ void updateRotaryEncoder(unsigned long aNow) {
         break;
       case TC_F3BSpeedTask:
         switch(ourF3BSpeedTask.getTaskState()) {
-          case F3BSpeedTask::TaskTimeOverflow:
-          case F3BSpeedTask::TaskWaiting:
-          case F3BSpeedTask::TaskFinished:
+          case F3XFixedDistanceTask::TaskTimeOverflow:
+          case F3XFixedDistanceTask::TaskWaiting:
+          case F3XFixedDistanceTask::TaskFinished:
             ourF3BSpeedTask.stop();
             ourContext.set(TC_F3XBaseMenu);
             resetRotaryEncoder(TC_F3BSpeedTask);
@@ -2419,6 +2523,7 @@ void updateRotaryEncoder(unsigned long aNow) {
     ourREOldPos = position;
   }
 } 
+#endif
 
 void loop()
 {
