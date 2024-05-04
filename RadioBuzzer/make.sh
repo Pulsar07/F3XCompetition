@@ -1,0 +1,1 @@
+/home/stransky/Links/arduino/bin/make.sh

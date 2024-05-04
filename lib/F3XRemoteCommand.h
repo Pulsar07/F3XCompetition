@@ -10,7 +10,11 @@ enum class F3XRemoteCommandType {
   ValBatB,
   BLineStateReq,
   BLineStateResp,
-  Invalid
+  Invalid,
+  SignalA,
+  RemoteSignalBuzz,
+  RemoteSignalStateReq,
+  RemoteSignalStateResp,
 };
 
 class F3XRemoteCommand

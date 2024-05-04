@@ -65,17 +65,36 @@ void RFTransceiver::setDefaults() {
 }
 
 void RFTransceiver::begin(uint8_t aNodeNum) {
-  byte address[][6]={"F3X-A", "F3X-B"};
+  // byte address[][6]={"F3X-A", "F3X-B"};
+  // memcpy(&myAddress[0][0], &address[aNodeNum%2][0], 6);
+  // memcpy(&myAddress[1][0], &address[(aNodeNum+1)%2][0], 6);
+  //
+  byte address[][6]={"F3X-A", "F3X-B", "G3X-B"};
   
-  memcpy(&myAddress[0][0], &address[aNodeNum%2][0], 6);
-  memcpy(&myAddress[1][0], &address[(aNodeNum+1)%2][0], 6);
+  switch ( aNodeNum) {
+    case 0:
+      memcpy(&myAddress[0][0], "F3X-A", 6);
+      memcpy(&myAddress[1][0], "F3X-B", 6);
+      memcpy(&myAddress[2][0], "G3X-B", 6);
+      break;
+    case 1:
+      memcpy(&myAddress[0][0], "F3X-B", 6);
+      memcpy(&myAddress[1][0], "F3X-A", 6);
+      memcpy(&myAddress[2][0], "-----", 6);
+      break;
+    case 2:
+      memcpy(&myAddress[0][0], "G3X-B", 6);
+      memcpy(&myAddress[1][0], "-----", 6);
+      memcpy(&myAddress[2][0], "-----", 6);
+      break;
+  }
 
   if (!myRadio->begin()) {
     Logger::getInstance().log(INFO, F("radio hardware not responding!"));
     delay(100);
     while (1) {} // hold program in infinite loop to prevent subsequent errors
   }
-  String printout = F("nRF24L01 – 2.4 GHz Radio initialized");
+  String printout = F("nRF24L01 – 2.4 GHz Radio initialized\n\t");
   printout.concat( myRadio->isPVariant()?String(F("(+ Variant)")) : String(F("(normal Variant)")));
   printout.concat( String(F("\nnRF24L01 – addresses: write:")) + String((char*) &myAddress[0][0]) + "/read:"+String((char*) &myAddress[1][0]));
   Logger::getInstance().log(INFO, printout);
@@ -86,10 +105,28 @@ void RFTransceiver::begin(uint8_t aNodeNum) {
 
   setDefaults();
 
-  myRadio->openReadingPipe(1, &myAddress[1][0]); // set the address
-  myRadio->openWritingPipe(&myAddress[0][0]);
+  switch ( aNodeNum) {
+    case 0:
+      myRadio->openReadingPipe(1, &myAddress[1][0]); // set the address
+      myRadio->openReadingPipe(2, &myAddress[2][0]); // set the address
+      myRadio->openWritingPipe(&myAddress[0][0]);
+      break;
+    case 1:
+      myRadio->openReadingPipe(1, &myAddress[1][0]); // set the address
+      myRadio->openWritingPipe(&myAddress[0][0]);
+      break;
+    case 2:
+      myRadio->openReadingPipe(1, &myAddress[0][0]); // set the address
+      myRadio->openWritingPipe(&myAddress[0][0]);  // this address will implicit set as reading pipe 0
+      break;
+  }
   myRadio->startListening(); // set as receiver
+}
 
+void RFTransceiver::setWritingPipe(uint8_t aPipeNumber) {
+  myRadio->stopListening();
+  myRadio->openWritingPipe(&myAddress[aPipeNumber][0]);
+  myRadio->startListening(); // set as receiver
 }
 
 uint8_t  RFTransceiver::getSignalStrength() {

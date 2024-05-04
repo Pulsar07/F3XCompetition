@@ -10,6 +10,7 @@ class RFTransceiver
 public:
   RFTransceiver(const char*, uint8_t, uint8_t);
   void begin(uint8_t aNodeNum);
+  void setWritingPipe(uint8_t aPipeNumber);
   void setAck(boolean);
   boolean getAck();
   void setDataRate(uint8_t);
@@ -28,7 +29,7 @@ public:
   uint8_t  getSignalStrength();
 protected:
   RF24 *myRadio;
-  byte myAddress[2][6];
+  byte myAddress[3][6];
   char mySendBuffer[33];
   char myRecvBuffer[33];
   char myName[7];

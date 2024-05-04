@@ -65,6 +65,7 @@ class PinManager {
     }
 
     void on(uint16_t aDuration) {
+      // logMsg(INFO, String(F("=====> PinManager::on():")) + String(aDuration)); 
       switch (myState) {
         case DISABLED:
           return;

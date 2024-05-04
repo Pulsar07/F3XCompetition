@@ -24,6 +24,8 @@ typedef struct {
   int8_t radioPower;
   int8_t radioChannel;
   int16_t f3bSpeedTasktime;
+  uint8_t buzzerSetting;
+  boolean competitionSetting;
 } configData_t;
 
 #endif

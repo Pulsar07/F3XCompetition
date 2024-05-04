@@ -33,7 +33,7 @@
 
 #define USE_RXTX_AS_GPIO
 
-#define APP_VERSION "V030"
+#define APP_VERSION "V031"
 
 /*
 Version History
@@ -47,6 +47,7 @@ Version History
  V028 18.03.2024: RS : new speed start / back menu added
  V029 19.03.2024: RS : F3B Speed Tasktime is now a config item.
  V030 28.03.2024: RS : Refactoring F3BSpeedTask -> F3XFixedDistanceTask, more consistent time strings and units (CSV)
+ V031 04.05.2024: RS : added support for a radio buzzer 
 */
 
 /**
@@ -115,6 +116,16 @@ static boolean ourREState = true;
 static int8_t ourREInversion = 1;
 static long ourREOldPos  = 0;
 
+enum BuzzerSetting {
+  BS_ALL = 0, // both buzzers are active 
+  BS_ALINE, // only direct connected A-Line Buzzer 
+  BS_RADIOBUZZER, // only remote radio buzzer
+  BS_NONE, // no buzzers are active 
+  BS_LAST,
+};
+
+static BuzzerSetting ourBuzzerSetting = BS_RADIOBUZZER;
+static boolean ourIsTimeCriticalOperationRunning = false;
 
 enum ToolContext {
   TC_F3XBaseMenu,
@@ -212,17 +223,18 @@ const uint8_t ourF3XBaseMenuSize = sizeof(ourF3XBaseMenuItems) / sizeof(char*);;
 // TC_F3XSettingsMenu
 const char* ourSettingsMenuName = "Settings";
 const char* ourSettingsMenu0 = "0:F3B Speed Ttime";
-const char* ourSettingsMenu1 = "1:Buzzer on/off";
-const char* ourSettingsMenu2 = "2:Radio channel";
-const char* ourSettingsMenu3 = "3:Radio power";
-const char* ourSettingsMenu4 = "4:Display invert";
-const char* ourSettingsMenu5 = "5:Rotary button inv.";
-const char* ourSettingsMenu6 = "6:Update firmware";
-const char* ourSettingsMenu7 = "7:Update filesystem";
-const char* ourSettingsMenu8 = "8:WiFi on/off";
-const char* ourSettingsMenu9 = "9:Save settings";
-const char* ourSettingsMenu10 = "10:Main menu";
-const char* ourSettingsMenuItems[] = {ourSettingsMenu0, ourSettingsMenu1, ourSettingsMenu2, ourSettingsMenu3, ourSettingsMenu4, ourSettingsMenu5, ourSettingsMenu6, ourSettingsMenu7, ourSettingsMenu8, ourSettingsMenu9, ourSettingsMenu10};
+const char* ourSettingsMenu1 = "1:Buzzers setup";
+const char* ourSettingsMenu2 = "2:Competition setup";
+const char* ourSettingsMenu3 = "3:Radio channel";
+const char* ourSettingsMenu4 = "4:Radio power";
+const char* ourSettingsMenu5 = "5:Display invert";
+const char* ourSettingsMenu6 = "6:Rotary button inv.";
+const char* ourSettingsMenu7 = "7:Update firmware";
+const char* ourSettingsMenu8 = "8:Update filesystem";
+const char* ourSettingsMenu9 = "9:WiFi on/off";
+const char* ourSettingsMenu10 = "10:Save settings";
+const char* ourSettingsMenu11 = "11:Main menu";
+const char* ourSettingsMenuItems[] = {ourSettingsMenu0, ourSettingsMenu1, ourSettingsMenu2, ourSettingsMenu3, ourSettingsMenu4, ourSettingsMenu5, ourSettingsMenu6, ourSettingsMenu7, ourSettingsMenu8, ourSettingsMenu9, ourSettingsMenu10, ourSettingsMenu11};
 const uint8_t ourSettingsMenuSize = sizeof(ourSettingsMenuItems) / sizeof(char*);
 
 // TC_F3BSpeedMenu
@@ -269,6 +281,7 @@ unsigned long ourSecond = 0;
 
 static configData_t ourConfig;
 F3XFixedDistanceTask ourF3BSpeedTask(150, 4);
+F3XFixedDistanceTask ourF3FTask(100, 10);
 unsigned long ourWlanRoundTripTime=0;
 unsigned long ourRadioRequestTime=0;
 float ourRadioRoundTripTime=0;
@@ -291,6 +304,7 @@ F3XRemoteCommand ourRemoteCmd;
 uint16_t ourBatteryAVoltage;
 uint16_t ourBatteryBVoltage;
 uint16_t ourBatteryBVoltageRaw;
+uint16_t ourBatteryRemoteSignalRaw;
 unsigned long ourTimedReset = 0;
 unsigned long ourDialogTimer=0;
 String ourDialogString="";
@@ -435,24 +449,70 @@ F3BTaskData ourF3BTaskData;
 
 void restartMCs(uint16_t aDelay, bool aRestartOnlyBLine=false) {
   ourRadio.transmit(ourRemoteCmd.createCommand(F3XRemoteCommandType::CmdRestartMC)->c_str(), 20);
+  ourRadio.setWritingPipe(2);
+  ourRadio.transmit(ourRemoteCmd.createCommand(F3XRemoteCommandType::CmdRestartMC)->c_str(), 20);
+  ourRadio.setWritingPipe(0);
   if (!aRestartOnlyBLine) {
     // force a restart of ourself
     ourTimedReset = millis() + aDelay;
   }
 }
 
-void reactonSignalA() {
-  ourBuzzer.on(500);
-  logMsg(DEBUG, "reactonSignalA");
-  if (ourF3BSpeedTask.getTaskState() == F3XFixedDistanceTask::TaskFinished) {
-    ourF3BTaskData.writeData();
+
+/*
+* send a RF24 command to the 2. pipe (radioBuzzer) 
+*/
+void radioBuzzer(uint16_t aDura) {
+  // logMsg(INFO, String(F("=====> radioBuzzer on:")) + String(aDura)); 
+  ourRadio.setWritingPipe(2);
+  unsigned long a = millis();
+  boolean sendSuccess = ourRadio.transmit(ourRemoteCmd.createCommand(F3XRemoteCommandType::RemoteSignalBuzz, String(aDura))->c_str(), 4);
+
+  if (!sendSuccess) {
+    logMsg(LS_INTERNAL, String(F("sending RemoteSignalBuzz NOT successsfull. Retransmissions: ")) 
+      + String(ourRadio.getRetransmissionCount()));
   }
-}
-void reactonSignalB() {
-  ourBuzzer.on(500);
-  logMsg(DEBUG, "reactonSignalB");
+  logMsg(LS_INTERNAL, String(F("sending RemoteSignalBuzz in: ") + String((millis() - a)))); 
+  ourRadio.setWritingPipe(0);
 }
 
+void signalBuzzing() {
+  uint16_t dura = 500 + ourF3BSpeedTask.getSignalledLegCount();
+  switch (ourBuzzerSetting) {
+    case BS_ALL: // both buzzers are active 
+      radioBuzzer(dura);
+      ourBuzzer.on(dura);
+      break;
+    case BS_ALINE: // only direct connected A-Line Buzzer 
+      ourBuzzer.on(dura);
+      break;
+    case BS_RADIOBUZZER: // only remote radio buzzer
+      radioBuzzer(dura);
+      break;
+    case BS_NONE: // no buzzers are active 
+      break;
+  }
+}
+
+void reactonSignalA() {
+  logMsg(LS_INTERNAL, "reactonSignalA");
+  signalBuzzing();
+  switch(ourContext.get()) {
+    case TC_F3BSpeedTask:
+      if (ourF3BSpeedTask.getTaskState() == F3XFixedDistanceTask::TaskFinished) {
+        ourF3BTaskData.writeData();
+      }
+      break;
+    case TC_F3FTask:
+      // TBI
+      break;
+  }
+}
+
+void reactonSignalB() {
+  logMsg(LS_INTERNAL, "reactonSignalB");
+  signalBuzzing();
+}
 
 /**
   return a leg time literal with the format 12.23s/43m  
@@ -716,6 +776,11 @@ String getWebContentType(String filename) {
 
 // send file to the client (if it exists)
 bool handleWebFileRead(String path) {
+  if (ourConfig.competitionSetting == true && ourIsTimeCriticalOperationRunning == true) {
+    // do nothing, in case of competition setting and time critical operation is running
+    ourWebServer.send(503, F("text/plain"), F("F3XCompetition in restricted web mode while time critical operation !"));
+    return true;
+  }
   // If a folder is requested, send the index file
   if (path.endsWith(F("/"))) path += F("index.html");
   String contentType = getWebContentType(path);
@@ -771,6 +836,34 @@ void setWebDataReq() {
   if (name == F("restart_mc")) {
     logMsg(INFO, F("web cmd restart mcs"));
     restartMCs(500);
+  } else 
+  if (name == F("f3b_speed_tasktime")) {
+    ourConfig.f3bSpeedTasktime=value.toInt();
+    logMsg(LS_INTERNAL, F("set f3b_speed_tasktime :") + String(ourConfig.f3bSpeedTasktime));
+  } else 
+  if (name == F("buzzer_setting")) {
+    if (value == "all") {
+      ourBuzzerSetting = BS_ALL;
+    } else
+    if (value == "aline") {
+      ourBuzzerSetting = BS_ALINE;
+    } else
+    if (value == "radiobuzzer") {
+      ourBuzzerSetting = BS_RADIOBUZZER;
+    } else
+    if (value == "none") {
+      ourBuzzerSetting = BS_NONE;
+    } else
+    ourRadioSendSettings=true;
+    ourConfig.buzzerSetting = ourBuzzerSetting;
+    logMsg(LS_INTERNAL, F("set buzzerSetting:") + String(ourConfig.buzzerSetting));
+  } else 
+  if (name == F("competition_setup")) {
+    ourConfig.competitionSetting=false;
+    if (value == F("true")) {
+      ourConfig.competitionSetting=true;
+    }
+    logMsg(LS_INTERNAL, F("set competitionSetting:") + String(ourConfig.competitionSetting));
   } else 
   if (name == F("radio_channel")) {
     ourRadioChannel=value.toInt();
@@ -1025,6 +1118,14 @@ void getWebLogReq() {
 }
 
 void getWebDataReq() {
+  String response;
+  if (ourConfig.competitionSetting == true && ourIsTimeCriticalOperationRunning == true) {
+    // do nothing, in case of competition setting and time critical operation is running
+   //  ourWebServer.send(503, F("text/plain"), F("XXXXXX !"));
+    response = String(F("id_time=")) + getHMSTimeStr(millis()) + MYSEP_STR;
+    ourWebServer.send(200, F("text/plane"), response.c_str()); //Send the response value only to client ajax request
+    return;
+  }
   #ifdef PERF_DEBUG
   unsigned long start = millis();
   #endif
@@ -1050,7 +1151,6 @@ void getWebDataReq() {
     // ignore all requests in startup phase
     return;
   }
-  String response;
   for (uint8_t i=0; i<ourWebServer.args(); i++){
     String argName = ourWebServer.argName(i);
     String pushData;
@@ -1091,6 +1191,34 @@ void getWebDataReq() {
       } else {
         response += argName + "=offline" + MYSEP_STR;
       }
+    } else
+    if (argName.equals(F("id_f3b_speed_tasktime"))) {
+      response += argName + "=" + String(ourConfig.f3bSpeedTasktime) + MYSEP_STR;
+    } else
+    if (argName.equals(F("id_buzzer_setting"))) {
+      String setting;
+      switch (ourBuzzerSetting) {
+        case BS_ALL: // both buzzers are active 
+          setting=F("all");
+          break;
+        case BS_ALINE: // only direct connected A-Line Buzzer 
+          setting=F("aline");
+          break;
+        case BS_RADIOBUZZER: // only remote radio buzzer
+          setting=F("radiobuzzer");
+          break;
+        case BS_NONE: // no buzzers are active 
+          setting=F("none");
+          break;
+      }
+      response += argName + "=" + setting + MYSEP_STR;
+    } else
+    if (argName.equals(F("id_competition_setup"))) {
+      String setting="false";
+      if (ourConfig.competitionSetting) {
+        setting="true";
+      }
+      response += argName + "=" + setting + MYSEP_STR;
     } else
     if (argName.equals(F("id_radio_channel"))) {
         response += argName + "=" + String(ourRadio.getChannel()) + MYSEP_STR;
@@ -1329,8 +1457,30 @@ void setupRemoteCmd() {
   ourRemoteCmd.begin();
 }
 
+void taskStateListener(F3XFixedDistanceTask::State aState) {
+  switch(aState) {
+    case F3XFixedDistanceTask::TaskRunning:
+      ourIsTimeCriticalOperationRunning = true;
+      break;
+    case F3XFixedDistanceTask::TaskError:
+    case F3XFixedDistanceTask::TaskWaiting:
+    case F3XFixedDistanceTask::TaskTimeOverflow:
+    case F3XFixedDistanceTask::TaskFinished:
+    case F3XFixedDistanceTask::TaskNotSet:
+      ourIsTimeCriticalOperationRunning = false;
+      break;
+  }
+}
+
+void setupF3F() {
+  // ourF3FTask.init(&reactonSignalA, &reactonSignalB);
+  // ourF3FTask.setTasktime(ourConfig.f3bSpeedTasktime);
+  // ourF3FTask.init();
+}
+
 void setupSpeedTask() {
-  ourF3BSpeedTask.init(&reactonSignalA, &reactonSignalB);
+  ourF3BSpeedTask.init(reactonSignalA, reactonSignalB);
+  ourF3BSpeedTask.addStateChangeCallback(taskStateListener);
   ourF3BSpeedTask.setTasktime(ourConfig.f3bSpeedTasktime);
   ourF3BTaskData.init();
 }
@@ -1412,6 +1562,8 @@ void setDefaultConfig() {
   ourConfig.radioChannel = 110;
   ourConfig.radioPower = RF24_PA_HIGH;
   ourConfig.f3bSpeedTasktime = 150;
+  ourConfig.buzzerSetting = (uint8_t) BS_RADIOBUZZER;
+  ourConfig.competitionSetting = false;
 }
 
 void loadConfig() {
@@ -1465,6 +1617,10 @@ void setupConfig() {
   if (ourConfig.f3bSpeedTasktime < 60 || ourConfig.f3bSpeedTasktime > 300) {
     ourConfig.f3bSpeedTasktime = 180;
   }
+  if (ourConfig.buzzerSetting < 0 || ourConfig.buzzerSetting >= (uint8_t) BS_LAST) {
+    ourConfig.buzzerSetting = (uint8_t) BS_RADIOBUZZER;
+  }
+  ourBuzzerSetting = (BuzzerSetting) ourConfig.buzzerSetting;
   cfg.concat(String(ourConfig.f3bSpeedTasktime));
   cfg.concat(String(F("s")));
   forceOLED(0, cfg);
@@ -1511,7 +1667,6 @@ void updateRadio(unsigned long aNow) {
   #define B_LINE_REQUEST_DELAY 3000
   
   static boolean isCmdCycleAnswerReceived = true;
-  static uint8_t LastId = 255;
   uint8_t id=0;
 
   // first try to read all data comming from radio peer
@@ -1524,17 +1679,15 @@ void updateRadio(unsigned long aNow) {
   if (ourRemoteCmd.available()) {
     String* arg = NULL;
 
-    // here the received F3XRemoteCommand (from B-Line) are dispatched and handled 
+    // here the received F3XRemoteCommand (from A-/B-Line) are dispatched and handled 
     switch (ourRemoteCmd.getType()) {
+      case F3XRemoteCommandType::SignalA: 
+        logMsg(INFO, F("Signal-A received"));
+        ourF3BSpeedTask.signal(F3XFixedDistanceTask::SignalA);
+        break;
       case F3XRemoteCommandType::SignalB:
-        arg = ourRemoteCmd.getArg();
-        id = arg->toInt();
-        if (id != LastId) { 
-          logMsg(INFO, F("Signal-B received"));
-          ourF3BSpeedTask.signal(F3XFixedDistanceTask::SignalB);
-        } else {
-          logMsg(WARNING, F("Signal-B retarded"));
-        }
+        logMsg(INFO, F("Signal-B received"));
+        ourF3BSpeedTask.signal(F3XFixedDistanceTask::SignalB);
         break;
       case F3XRemoteCommandType::CmdCycleTestAnswer:
         ourRadioCycleRecvCnt++;
@@ -1556,6 +1709,12 @@ void updateRadio(unsigned long aNow) {
           float volt=(((float) ourBatteryBVoltageRaw)/1023.0)*5.0f*1000*1.012f;
           ourBatteryBVoltage = volt;
           logMsg(INFO, String(F("Battery B voltage: ")) + String(ourBatteryBVoltage) + F("mV"));
+        }
+        break;
+      case F3XRemoteCommandType::RemoteSignalStateResp: {
+          ourBatteryRemoteSignalRaw = ourRemoteCmd.getArg()->toInt();;
+          float volt=(((float) ourBatteryRemoteSignalRaw)/1023.0)*10.0f*1000*1.0f;
+          logMsg(LS_INTERNAL, String(F("RemoteSignalBattery  voltage: ")) + String(ourBatteryRemoteSignalRaw) + String("/") + String(volt) + F("mV"));
         }
         break;
       default:
@@ -1595,6 +1754,12 @@ void updateRadio(unsigned long aNow) {
     ourRadioQuality = irr_low_pass_filter(ourRadioQuality, quality, 0.4f);
     ourRadioSignalRoundTrip = irr_low_pass_filter(ourRadioSignalRoundTrip, signalRoundTrip, 0.4f);
     logMsg(LOG_MOD_RADIO, INFO, F("radio quality: ") + String(quality, 0) + F("%/") + String(ourRadioQuality,0) + F("%"));
+
+
+    // request state infos from the remote radio signal device
+    ourRadio.setWritingPipe(2);
+    ourRadio.transmit(ourRemoteCmd.createCommand(F3XRemoteCommandType::RemoteSignalStateReq, String(ourRadioRequestArg))->c_str(), 20);
+    ourRadio.setWritingPipe(0);
   }
 
   if (ourRadioSendSettings && ourRadioQuality > 99.0f) {
@@ -1610,6 +1775,9 @@ void updateRadio(unsigned long aNow) {
     
     if (ourRadio.transmit(ourRemoteCmd.createCommand(F3XRemoteCommandType::CmdSetRadio, settings)->c_str(), 20) ) {
       // changed radio settings are successfully transmitted to B-Line, now the A-Line can also be switched
+      ourRadio.setWritingPipe(2);
+      ourRadio.transmit(ourRemoteCmd.createCommand(F3XRemoteCommandType::CmdSetRadio, settings)->c_str(), 20);
+      ourRadio.setWritingPipe(0);
       ourRadio.setPower(ourRadioPower);
       ourRadio.setChannel(ourRadioChannel);
       ourRadio.setDataRate(ourRadioDatarate);
@@ -1811,6 +1979,14 @@ void showOLEDMenu(const char* aItems[], uint8_t aNumItems, const char* aName) {
   ourOLED.setDrawColor(1);
 }
 
+void showDialog(int aDuration, boolean aVal) {
+  String msg = F("false");
+  if (aVal) {
+    msg = F("true");
+  }
+  showDialog(aDuration, msg);
+}
+
 void showDialog(int aDuration, String aMessage) {
   ourDialogTimer = millis() + aDuration;
   ourDialogString = aMessage;
@@ -1839,6 +2015,121 @@ void showNotYetImplemented() {
   showMessage(F("Error"), F("not yet implemented"));
 }
 
+void showF3FTask() {
+  static unsigned long lastFT = 0;
+  unsigned long flightTime = ourF3FTask.getFlightTime(F3X_GFT_RUNNING_TIME);
+  
+
+  String runSpeedTime;
+  String taskTime;
+  String legTimeStr[4];
+  // runSpeedTime = getLetTimeString(F3X_TIME_NOT_SET, F3X_TIME_NOT_SET, 0, 0, 0,'/', false, true);
+  runSpeedTime = getSCTimeStr(0UL, true);
+  String info;
+
+  char taskState='?';
+  if (flightTime != lastFT || ourF3FTask.getTaskState() != F3XFixedDistanceTask::TaskRunning) {
+    lastFT = flightTime;
+    switch (ourF3FTask.getTaskState()) {
+      case F3XFixedDistanceTask::TaskRunning:
+        taskState='R';
+        if (ourF3FTask.getSignalledLegCount() >=0) {
+          taskState= ourF3FTask.getSignalledLegCount() +'0';
+        }
+        switch (ourF3FTask.getSignalledLegCount()) {
+          case F3X_PROGRESS_NOT_STARTED:
+            info=F("next Press:1.A crossing");
+            break;
+          case 0: // A-line crossed 1.time = 0m
+            info=F("next Press:1.B turn/1.A cross ");
+            break;
+          case 1: // B-Line crossed 1.time = 150m
+            info=F("next Press:1.A turn");
+            break;
+          case 2: // A-line crossed 2.time = 300m
+            info=F("next Press:2.B turn");
+            break;
+          case 3: // B-line crossed 2.time = 450m
+            info=F("next Press:A final cross");
+            break;
+          default:
+            info=F("P:---");
+            break;
+        }
+       
+        if (ourF3FTask.getSignalledLegCount() > F3X_PROGRESS_NOT_STARTED) {
+          // runSpeedTime=getLetTimeString(flightTime, F3X_TIME_NOT_SET, 0, 0, 0,'/', false, true);
+          runSpeedTime = getSCTimeStr(flightTime, true);
+        }
+        break;
+      case F3XFixedDistanceTask::TaskWaiting:
+        taskState='W';
+        info=F("P:Start Tasktime");
+        break;
+      case F3XFixedDistanceTask::TaskTimeOverflow:
+        taskState='O';
+        info=F("PP:Reset");
+        break;
+      case F3XFixedDistanceTask::TaskError:
+        taskState='E';
+        break;
+      case F3XFixedDistanceTask::TaskFinished:
+        taskState='F';
+        // runSpeedTime=getLetTimeString(flightTime, F3X_TIME_NOT_SET, 0, 0, 0);
+        runSpeedTime = getSCTimeStr(flightTime, true);
+        for (int i=0; i < 4; i++) {
+          F3XLeg leg = ourF3FTask.getLeg(i);
+          legTimeStr[i] = getLegTimeStr(leg.time, leg.deadTime, leg.deadDistance);
+        }
+        info=F("");
+        break;
+      default:
+        taskState='?';
+        break;
+    }
+  
+    // OLED 128x64
+    ourOLED.setFont(oledFontNormal);
+    ourOLED.setCursor(0, 12);
+    ourOLED.print(F("F3F :"));
+    ourOLED.setFont(oledFontBig);
+    ourOLED.print(runSpeedTime);
+
+    ourOLED.setFont(oledFontSmall);
+    ourOLED.setCursor(0, 63);
+    ourOLED.print(info);
+    ourOLED.setCursor(100, 63);
+    ourOLED.print(F("["));
+    ourOLED.print(taskState);
+    ourOLED.print(F("]"));
+    
+    switch (ourF3FTask.getTaskState()) {
+      case F3XFixedDistanceTask::TaskWaiting:
+      case F3XFixedDistanceTask::TaskRunning:
+        ourOLED.setFont(oledFontNormal);
+        ourOLED.setCursor(10, 27);
+        ourOLED.print(F("Task Time: "));
+        ourOLED.print(getHMSTimeStr(ourF3FTask.getRemainingTasktime(), true));
+
+        break;
+      case F3XFixedDistanceTask::TaskFinished:
+        ourOLED.setFont(oledFontNormal);
+        ourOLED.setCursor(10, 27);
+        ourOLED.print(F("Leg 1: "));
+        ourOLED.print(legTimeStr[0]);
+        ourOLED.setCursor(10, 39);
+        ourOLED.print(F("Leg 2: "));
+        ourOLED.print(legTimeStr[1]);
+        ourOLED.setCursor(10, 51);
+        ourOLED.print(F("Leg 3: "));
+        ourOLED.print(legTimeStr[2]);
+        ourOLED.setCursor(10, 63);
+        ourOLED.print(F("Leg 4: "));
+        ourOLED.print(legTimeStr[3]);
+        break;
+    }
+  }
+}
 void showF3BSpeedTask() {
   static unsigned long lastFT = 0;
   unsigned long flightTime = ourF3BSpeedTask.getFlightTime(F3X_GFT_RUNNING_TIME);
@@ -1980,7 +2271,7 @@ void updateOLED(unsigned long aNow, bool aForce) {
           showF3BSpeedTask();
           break;
         case TC_F3FTask:
-          showNotYetImplemented();
+          showF3FTask();
           break;
         case TC_F3XMessage:
           showMessagePage();
@@ -2102,7 +2393,7 @@ void updateSpeedTask(unsigned long aNow) {
 }
 
 void updateWebServer(unsigned long aNow) {
- ourWebServer.handleClient();
+  ourWebServer.handleClient();
 }
 
 void updatePushButton(unsigned long aNow) {
@@ -2283,15 +2574,38 @@ void updatePushButton(unsigned long aNow) {
             resetRotaryEncoder();
             #endif
             break;
-          case 1: // "1:Buzzer on/off";
-            if (ourBuzzer.isEnabled()) {
-              ourBuzzer.disable();
-            } else {
-              ourBuzzer.enable();
+          case 1: // "1:Buzzers setup";
+            {
+            uint8_t t = (uint8_t) ourBuzzerSetting;
+            t++;
+            ourBuzzerSetting = (BuzzerSetting) (t % (uint8_t) BS_LAST);
+            switch (ourBuzzerSetting) {
+              case BS_ALL: // both buzzers are active 
+                ourBuzzer.enable();
+                showDialog(2000, String(F("all buzzers")));
+                break;
+              case BS_ALINE: // only direct connected A-Line Buzzer 
+                ourBuzzer.enable();
+                showDialog(2000, String(F("only A-Line")));
+                break;
+              case BS_RADIOBUZZER: // only remote radio buzzer
+                ourBuzzer.disable();
+                showDialog(2000, String(F("only radio")));
+                break;
+              case BS_NONE: // no buzzers are active 
+                ourBuzzer.disable();
+                showDialog(2000, String(F("no buzzers")));
+                break;
             }
+
             ourBuzzer.on(PinManager::SHORT);
+            }
             break;
-          case 2: // "2:Radio channel";
+          case 2: // "2:CompetitionSetup";
+            ourConfig.competitionSetting = !ourConfig.competitionSetting;
+            showDialog(2000, ourConfig.competitionSetting);
+            break;
+          case 3: // "3:Radio channel";
             ourBuzzer.on(PinManager::SHORT);
             if (!ourRadioSendSettings || ourRadioQuality > 99.0f) {
               ourContext.set(TC_F3XRadioChannel);
@@ -2304,7 +2618,7 @@ void updatePushButton(unsigned long aNow) {
               ourContext.setInfo(String(F("no B-Line connected")));
             }
             break;
-          case 3: // "3:Radio power";
+          case 4: // "4:Radio power";
             ourBuzzer.on(PinManager::SHORT);
             if (!ourRadioSendSettings || ourRadioQuality > 99.0f) {
               ourContext.set(TC_F3XRadioPower);
@@ -2317,12 +2631,12 @@ void updatePushButton(unsigned long aNow) {
               ourContext.setInfo(String(F("no B-Line connected")));
             }
             break;
-          case 4: // "4:Display invert";
+          case 5: // "5:Display invert";
             ourBuzzer.on(PinManager::SHORT);
             ourConfig.oledFlipped = ourConfig.oledFlipped == true? false: true;
             ourOLED.setFlipMode(ourConfig.oledFlipped);
             break;
-          case 5: // "5:Rotary button inv.";
+          case 6: // "6:Rotary button inv.";
             ourBuzzer.on(PinManager::SHORT);
             ourConfig.rotaryEncoderFlipped = ourConfig.rotaryEncoderFlipped ? false: true;
             ourREInversion = ourConfig.rotaryEncoderFlipped ? -1 : 1;
@@ -2338,23 +2652,23 @@ void updatePushButton(unsigned long aNow) {
             }
             #endif
             break;
-          case 6: //  "6:Update firmware";
+          case 7: //  "7:Update firmware";
             otaUpdate(false); // firmware
             break;
-          case 7: //  "7:Update filesystem";
+          case 8: //  "8:Update filesystem";
             otaUpdate(true); // filesystem
             break;
-          case 8: //  "8:WiFi on/off";
+          case 9: //  "9:WiFi on/off";
             WiFi.mode(WIFI_OFF) ; // client mode only
             ourConfig.wifiIsActive = !ourConfig.wifiIsActive;
             showDialog(2000, String(F("WiFi is ")) + (ourConfig.wifiIsActive ? String(F("enabled")) : String(F("disabled"))));
             break;
-          case 9: //  "9:Save settings";
+          case 10: //  "10:Save settings";
             ourBuzzer.on(PinManager::SHORT);
             saveConfig();
             showDialog(2000, String(F("Config saved ")));
             break;
-          case 10: // "10:Main menu";
+          case 11: // "11:Main menu";
             ourBuzzer.on(PinManager::SHORT);
             #ifdef USE_RXTX_AS_GPIO
             resetRotaryEncoder();
@@ -2457,7 +2771,7 @@ void controlRotaryEncoder(boolean aEnable) {
     storedPos = ourRotaryEncoder.read();
     ourREState = false;
   }
-  logMsg(LS_INTERNAL, String(F("RotaryEncoder enabled:")) + String(aEnable));
+  // logMsg(LS_INTERNAL, String(F("RotaryEncoder enabled:")) + String(aEnable));
 }
 
 

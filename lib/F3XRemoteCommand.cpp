@@ -83,6 +83,21 @@ String* F3XRemoteCommand::createCommand(F3XRemoteCommandType aCmdType) {
     case F3XRemoteCommandType::SignalB:
       BUFFER="B;";
       break;
+    case F3XRemoteCommandType::RemoteSignalBuzz:
+      BUFFER="C;";
+      break;
+    case F3XRemoteCommandType::RemoteSignalStateReq:
+      BUFFER="D;";
+      break;
+    case F3XRemoteCommandType::RemoteSignalStateResp:
+      BUFFER="E;";
+      break;
+    case F3XRemoteCommandType::BLineStateReq:
+      BUFFER="M;";
+      break;
+    case F3XRemoteCommandType::BLineStateResp:
+      BUFFER="N;";
+      break;
     case F3XRemoteCommandType::CmdCycleTestRequest:
       BUFFER="R;";
       break;
@@ -94,12 +109,6 @@ String* F3XRemoteCommand::createCommand(F3XRemoteCommandType aCmdType) {
       break;
     case F3XRemoteCommandType::CmdRestartMC:
       BUFFER="Y;";
-      break;
-    case F3XRemoteCommandType::BLineStateReq:
-      BUFFER="M;";
-      break;
-    case F3XRemoteCommandType::BLineStateResp:
-      BUFFER="N;";
       break;
   }
 
@@ -168,6 +177,15 @@ F3XRemoteCommandType F3XRemoteCommand::getType() {
         break;
       case 'B':
         retVal = F3XRemoteCommandType::SignalB;
+        break;
+      case 'C':
+        retVal = F3XRemoteCommandType::RemoteSignalBuzz;
+        break;
+      case 'D':
+        retVal = F3XRemoteCommandType::RemoteSignalStateReq;
+        break;
+      case 'E':
+        retVal = F3XRemoteCommandType::RemoteSignalStateResp;
         break;
       case 'M':
         retVal = F3XRemoteCommandType::BLineStateReq;

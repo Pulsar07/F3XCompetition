@@ -59,6 +59,7 @@ enum State {
   uint8_t getLegNumberMax();
   // void init(void (*)(), void (*)());
   void init(void (*aACallBack)(), void (*aBCallBack)());
+  void addStateChangeCallback( void (*aStateChangeCallback)(State));
   void signal(Signal aSignal);
   void signal();
   void timeOverflow();
@@ -81,11 +82,13 @@ protected:
   unsigned long myNow;
   void (*mySignalACallback)(void);
   void (*mySignalBCallback)(void);
+  void (*myStateChangeCallback)(State);
   int8_t mySignalledLegCount;
   State myTaskState;
   uint16_t myTasktime;
   uint16_t myLegLength;
   uint8_t myLegNumberMax;
+  void setTaskState(State aTaskState);
 };
 
 #endif  

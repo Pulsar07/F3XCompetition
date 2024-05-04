@@ -8,6 +8,7 @@
 F3XFixedDistanceTask::F3XFixedDistanceTask(uint16_t aLegLength, uint8_t aLegNumberMax) {
   mySignalACallback = nullptr;
   mySignalBCallback = nullptr;
+  myStateChangeCallback = nullptr;
   myTasktime = 180; // default tasktime 3 minutes
   myLegLength = aLegLength;
   myLegNumberMax = aLegNumberMax;
@@ -63,6 +64,10 @@ void F3XFixedDistanceTask::init(void (*aACallBack)(), void (*aBCallBack)()) {
   mySignalBCallback = aBCallBack;
 }
 
+void F3XFixedDistanceTask::addStateChangeCallback( void (*aStateChangeCallback)(State)) {
+  myStateChangeCallback = aStateChangeCallback;
+}
+
 /**
  * get the overall flight time in milliseconds depending on the given signal index argument aSignalIdx:
   aSignalIdx=F3X_GFT_LAST_SIGNALLED_TIME : return the time from the first A-line crossing till the last signalled crossing
@@ -103,7 +108,7 @@ void F3XFixedDistanceTask::timeOverflow() {
     return;
   }
   logMsg(INFO, "F3XFixedDistanceTask::TaskTimeOverflow" ); 
-  myTaskState = TaskTimeOverflow;
+  setTaskState(TaskTimeOverflow);
 }
 
 void F3XFixedDistanceTask::signal(Signal aType) {
@@ -120,6 +125,8 @@ void F3XFixedDistanceTask::signal(Signal aType) {
       mySignalTimeStamps[mySignalledLegCount] = millis();
       if (mySignalACallback != nullptr) {
         mySignalACallback();
+      } else {
+        logMsg(ERROR, String("mySignalACallback is null !!! "));
       }
     } else 
     if (mySignalledLegCount > 0) { // task is ongoing
@@ -127,11 +134,13 @@ void F3XFixedDistanceTask::signal(Signal aType) {
         mySignalledLegCount++;
         mySignalTimeStamps[mySignalledLegCount] = millis();
         if ( mySignalledLegCount == myLegNumberMax) { // last leg finished
-          myTaskState = TaskFinished;
+          setTaskState(TaskFinished);
           logMsg(INFO, "F3XFixedDistanceTask::TaskFinished" ); 
         }  
         if (mySignalACallback != nullptr) {
           mySignalACallback();
+        } else {
+          logMsg(ERROR, String("mySignalACallback is null !!! "));
         }
       } else { // NO crossing turn, additional A signal is used for dead time/distance measurement
         myDeadDistanceTimeStamp[mySignalledLegCount-1] = millis();
@@ -144,6 +153,8 @@ void F3XFixedDistanceTask::signal(Signal aType) {
         mySignalTimeStamps[mySignalledLegCount] = millis();
         if (mySignalBCallback != nullptr) {
           mySignalBCallback();
+        } else {
+          logMsg(ERROR, String("mySignalBCallback is null !!! "));
         }
       } else { // NO crossing turn, additional B signal is used for dead time/distance measurement
         myDeadDistanceTimeStamp[mySignalledLegCount-1] = millis();
@@ -154,7 +165,7 @@ void F3XFixedDistanceTask::signal(Signal aType) {
 
 
 void F3XFixedDistanceTask::stop() {
-  myTaskState = TaskWaiting;
+  setTaskState(TaskWaiting);
   resetSignals();
   myTaskStartTime = 0;
 }
@@ -164,7 +175,7 @@ void F3XFixedDistanceTask::start() {
     case TaskWaiting:
       resetSignals();
       myTaskStartTime = millis();
-      myTaskState = TaskRunning;
+      setTaskState(TaskRunning);
       break;
   }
 }
@@ -213,5 +224,12 @@ void F3XFixedDistanceTask::update() {
   if ( myTaskState == TaskRunning && getRemainingTasktime() == 0 ) {
     logMsg(ERROR, "Task time overflow");
     timeOverflow();
+  }
+}
+
+void F3XFixedDistanceTask::setTaskState(State aTaskState) {
+  myTaskState = aTaskState;
+  if (myStateChangeCallback != nullptr) {
+    myStateChangeCallback(myTaskState);
   }
 }

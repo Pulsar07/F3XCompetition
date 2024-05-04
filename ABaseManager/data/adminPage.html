@@ -89,6 +89,51 @@
    </div>
    <hr> <!-- ------------------------------------------------------------ -->
    <div class="container">
+    <h3>F3X Task settings </h3>
+    <p>changes setting details of the F3X Task</p>
+
+    <div class="row">
+     <div class="col-setting-values">
+      <input type="number" id="id_f3b_speed_tasktime" name="f3b_speed_tasktime" min="60" max="300" value="180">
+      <input type="button" onclick="sendSelectedValue('id_f3b_speed_tasktime')" value="Set">
+     </div>
+     <div class="col-setting-descr">
+      <label>F3B speed tasktime selection:</label>
+     </div>
+    </div>
+
+    <div class="row">
+     <div class="col-setting-values">
+       <select name="buzzer_setting" id="id_buzzer_setting">
+         <option value="all">local and lemote buzzer</option>
+         <option value="aline">only A-Line buzzer</option>
+         <option value="radiobuzzer">only radio buzzer/horn</option>
+         <option value="none">no buzzers</option>
+       </select>
+       <input type="button" onclick="sendSelectedValue('id_buzzer_setting')" value="Set">
+     </div>
+     <div class="col-setting-descr">
+      <label>Buzzer usage selection:</label>
+     </div>
+    </div>
+
+    <div class="row">
+     <div class="col-setting-values">
+       <select name="competition_setup" id="id_competition_setup">
+         <option value="true">true</option>
+         <option value="false">false</option>
+       </select>
+       <input type="button" onclick="sendSelectedValue('id_competition_setup')" value="Set">
+     </div>
+     <div class="col-setting-descr">
+      <label>competition setting=true, limits user interface handling while running tasks to a mimimum. </label>
+      <label>This will force more precise time measurment. </label>
+     </div>
+    </div>
+
+   </div>
+   <hr> <!-- ------------------------------------------------------------ -->
+   <div class="container">
     <h3>A-Line <=> B-Line connection RF24 radio </h3>
     <p>changes to the RF24 radio component.</p>
     <h4>Radio link between A-Line and B-Line is using a separate 1MHz 2.4GHz channel:</h4>
@@ -211,6 +256,9 @@
        "id_apSsid",
        "id_wifiActive",
        "id_online_status",
+       "id_f3b_speed_tasktime",
+       "id_buzzer_setting",
+       "id_competition_setup",
        "id_radio_channel",
        "id_radio_power",
        "initHeaderData"
