@@ -70,16 +70,34 @@ void RFTransceiver::begin(uint8_t aNodeNum) {
   // memcpy(&myAddress[1][0], &address[(aNodeNum+1)%2][0], 6);
   //
   byte address[][6]={"F3X-A", "F3X-B", "G3X-B"};
-  
+
+/*
+ * some thoughts to the RF24 addressing schema:
+ * Communication is done via pipes. 
+ * For a one-to-one communication of two peers a pipe with the same
+ * address has to be used on both sides
+ * The address does not address a source or a target, but the communication 
+ * relation / pipe between them
+ *
+ *
+ */
   switch ( aNodeNum) {
     case 0:
-      memcpy(&myAddress[0][0], "F3X-A", 6);
-      memcpy(&myAddress[1][0], "F3X-B", 6);
-      memcpy(&myAddress[2][0], "G3X-B", 6);
+      // better not to use something related to a peer name, 
+      // RF24 supports 6 pipes.
+      // Pipes 0 and 1 will store a full 5-byte address. 
+      // Pipes 2-5 will technically only store a single byte, 
+      // borrowing up to 4 additional bytes from pipe 1 per 
+      // the assigned address width. Pipes 1-5 should share 
+      // the same address, except the first byte. 
+      // Only the first byte in the array should be unique
+      memcpy(&myAddress[0][0], "F3X-A", 6);  // better 1abcd : BaseManager  <-> ALineController 
+      memcpy(&myAddress[1][0], "F3X-B", 6);  // better 2efgh : BaseManager  <-> BLineController
+      memcpy(&myAddress[2][0], "G3X-B", 6);  // better 3efgh : BaseManager  <-> RemoteBuzzer
       break;
     case 1:
-      memcpy(&myAddress[0][0], "F3X-B", 6);
-      memcpy(&myAddress[1][0], "F3X-A", 6);
+      memcpy(&myAddress[0][0], "F3X-A", 6);
+      memcpy(&myAddress[1][0], "-----", 6);
       memcpy(&myAddress[2][0], "-----", 6);
       break;
     case 2:
@@ -94,25 +112,27 @@ void RFTransceiver::begin(uint8_t aNodeNum) {
     delay(100);
     while (1) {} // hold program in infinite loop to prevent subsequent errors
   }
-  String printout = F("nRF24L01 – 2.4 GHz Radio initialized\n\t");
-  printout.concat( myRadio->isPVariant()?String(F("(+ Variant)")) : String(F("(normal Variant)")));
-  printout.concat( String(F("\nnRF24L01 – addresses: write:")) + String((char*) &myAddress[0][0]) + "/read:"+String((char*) &myAddress[1][0]));
-  Logger::getInstance().log(INFO, printout);
+  String printout = F("nRF24L01 – 2.4 GHz Radio initialized\n   ");
+  printout += myRadio->isPVariant()?String(F("(+ Variant)")) : String(F("(normal Variant)"));
 
   if (myRadio->isChipConnected()) {
-    Logger::getInstance().log(INFO, F("nRF24L01 – radio hardware is connected!"));
+    printout += F(": connected");
+  } else {
+    printout += F(": NOT connected!");
   }
+  Logger::getInstance().log(INFO, printout);
 
   setDefaults();
 
   switch ( aNodeNum) {
     case 0:
-      myRadio->openReadingPipe(1, &myAddress[1][0]); // set the address
-      myRadio->openReadingPipe(2, &myAddress[2][0]); // set the address
+      myRadio->openReadingPipe(1, &myAddress[0][0]); // set the address
+      myRadio->openReadingPipe(2, &myAddress[1][0]); // set the address
+      myRadio->openReadingPipe(3, &myAddress[2][0]); // set the address
       myRadio->openWritingPipe(&myAddress[0][0]);
       break;
     case 1:
-      myRadio->openReadingPipe(1, &myAddress[1][0]); // set the address
+      myRadio->openReadingPipe(1, &myAddress[0][0]); // set the address
       myRadio->openWritingPipe(&myAddress[0][0]);
       break;
     case 2:
@@ -227,7 +247,7 @@ boolean RFTransceiver::transmit(String aData, uint8_t aRetrans) {
     yield();
   }
   if ( (millis() - start) > 10) {
-    Logger::getInstance().log(INFO, String("RFTransceiver::transmit :") + String(writeRet) + F("in ") + String(millis() - start) + F("ms"));
+    Logger::getInstance().log(LOG_MOD_RADIO, INFO, String("RFTransceiver::transmit :") + String(writeRet) + F("in ") + String(millis() - start) + F("ms"));
   }
   myRadio->startListening();
   return writeRet;

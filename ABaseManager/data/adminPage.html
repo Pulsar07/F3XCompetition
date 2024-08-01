@@ -98,7 +98,37 @@
       <input type="button" onclick="sendSelectedValue('id_f3b_speed_tasktime')" value="Set">
      </div>
      <div class="col-setting-descr">
-      <label>F3B speed tasktime selection:</label>
+      <label for="id_f3b_speed_tasktime">F3B speed tasktime selection:</label>
+     </div>
+    </div>
+
+    <div class="row">
+     <div class="col-setting-values">
+      <input type="number" id="id_f3f_tasktime" name="f3f_tasktime" min="60" max="300" value="180">
+      <input type="button" onclick="sendSelectedValue('id_f3f_tasktime')" value="Set">
+     </div>
+     <div class="col-setting-descr">
+      <label for="id_f3f_tasktime">F3F tasktime selection:</label>
+     </div>
+    </div>
+
+    <div class="row">
+     <div class="col-setting-values">
+      <input type="number" id="id_f3f_leg_length" name="f3f_leg_length" min="50" max="150" value="100">
+      <input type="button" onclick="sendSelectedValue('id_f3f_leg_length')" value="Set">
+     </div>
+     <div class="col-setting-descr">
+      <label for="id_f3f_leg_length">F3F leg length selection (official 80m-100m):</label>
+     </div>
+    </div>
+
+    <div class="row">
+     <div class="col-setting-values">
+      <input class="config" type="checkbox" id="id_f3x_task_autostart" name="f3x_task_autostart" value="xx"
+       onchange="sendNameValue(this.name, this.checked)" >
+     </div>
+     <div class="col-setting-descr">
+      <label for="id_f3x_task_autostart">F3X auto start next task</label>
      </div>
     </div>
 
@@ -257,6 +287,9 @@
        "id_wifiActive",
        "id_online_status",
        "id_f3b_speed_tasktime",
+       "id_f3f_tasktime",
+       "id_f3f_leg_length",
+       "id_f3x_task_autostart",
        "id_buzzer_setting",
        "id_competition_setup",
        "id_radio_channel",

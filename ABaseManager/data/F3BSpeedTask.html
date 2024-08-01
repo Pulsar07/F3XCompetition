@@ -37,7 +37,7 @@
      </div>
      <div class="col-button">
       <button type="button" id="id_stop_task" name="stop_task" value="true" disabled
-      onclick="sendTimedNameValue(this.name, this.value); mySpeedTask.stop(this)">STOP Task</button>
+      onclick="sendTimedNameValue(this.name, this.value); myF3XTask.stop(this)">STOP Task</button>
      </div>
      <div class="col-text">
       <p> stop a running task and reset all values</p>
@@ -48,8 +48,8 @@
       <label>Speed Task State:</label>
      </div>
      <div class="col-button">
-      <label id="id_speed_task_state"> waiting for F3B Competition Server...</label> 
-      <label id="id_final_speed_time"></label>
+      <label id="id_speed_task_state"> waiting for F3X Manager...</label> 
+      <!-- <label id="id_final_speed_time_removeme"></label> -->
      </div>
      <div class="col-text">
       <p> task state description and final result after last line crossing</p>
@@ -83,7 +83,7 @@
      </div>
      <div class="col-button">
       <button type="button" id="id_start_task" name="start_task" value="true"
-      onclick="sendNameValue(this.name, this.value); mySpeedTask.start(this)">START Task</button>
+      onclick="sendNameValue(this.name, this.value); myF3XTask.start(this)">START Task</button>
      </div>
      <div class="col-text">
       <p> start speed task and set new frame time (150s)</p>

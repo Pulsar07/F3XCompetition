@@ -56,10 +56,33 @@
       <label>F3B-Speed-Task simulation:</label>
      </div>
      <div class="col-button">
-      <button type="button" id="id_f3b_speed_task" onclick="window.location.href='/F3BSpeedTask.html'">Speed</button>
+      <button type="button" id="id_f3b_speed_task" onclick="window.location.href='/F3BSpeedTask.html'">F3B Speed</button>
      </div>
      <div class="col-text">
       <p> Page supporting F3B-Speed-Task (4 legs) time and training data measurement <br>
+         (only for demonstration purposes)</p>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-declaration-long">
+      <label>F3F-Task Protocol Data:</label>
+     </div>
+     <div class="col-button">
+      <button type="button" onclick="window.location.href='/F3FTaskData.html'">F3FTaskData</button>
+     </div>
+     <div class="col-text">
+      <p>show the stored F3F task data sets</p>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-declaration-long">
+      <label>F3F-Task simulation:</label>
+     </div>
+     <div class="col-button">
+      <button type="button" onclick="window.location.href='/F3FTask.html'">F3F Task</button>
+     </div>
+     <div class="col-text">
+      <p> Page supporting F3F-Task (10 x 100m legs) time and training data measurement <br>
          (only for demonstration purposes)</p>
      </div>
     </div>
@@ -71,10 +94,23 @@
       <label>Internal Logging:</label>
      </div>
      <div class="col-button">
-      <button type="button" id="id_settings" onclick="window.location.href='/internalLog.html'">Show Log</button>
+      <button type="button" id="id_log" onclick="window.location.href='/internalLog.html'">Show Log</button>
      </div>
      <div class="col-text">
       <p> show internal logging data of the F3X-Software </p>
+     </div>
+    </div>
+    <div class="row">
+     <div class="col-declaration-long">
+      <label>OLED Screenshot:</label>
+     </div>
+     <div class="col-button">
+      <button type="button" id="id_take_screenshot" name="take_screenshot" value="true"
+              onclick="sendNameValue(this.name, this.value)">Take Screenshot</button>
+      <button type="button" id="id_show_screenshot" onclick="window.location.href='/screenshot.xbm'">Show Screenshot</button>
+     </div>
+     <div class="col-text">
+      <p> take / show a OLED screenshot </p>
      </div>
     </div>
    </div>

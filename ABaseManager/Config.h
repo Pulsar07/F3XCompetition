@@ -26,6 +26,9 @@ typedef struct {
   int16_t f3bSpeedTasktime;
   uint8_t buzzerSetting;
   boolean competitionSetting;
+  int16_t f3fTasktime;
+  boolean f3xTaskAutostart;
+  int8_t f3fLegLength;
 } configData_t;
 
 #endif

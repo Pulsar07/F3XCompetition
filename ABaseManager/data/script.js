@@ -87,9 +87,9 @@
           var elementValue = element[1];
           if (elementId == "__speedtask__") { 
             // console.log("elementId:" + elementId);
-            if ( mySpeedTask != null ){
+            if ( myF3XTask != null ){
               // console.log("speedtask.setState");
-              mySpeedTask.setState(elementValue); 
+              myF3XTask.setState(elementValue); 
             }
             break; 
           }
@@ -155,7 +155,7 @@
   }
 
   function getDataInTaskstate(aState) {
-    if (mySpeedTask.getState() == aState) {  // RUNNING
+    if (myF3XTask.getState() == aState) {  // RUNNING
       var xhttp = new XMLHttpRequest();
       xhttp.timeout = 2000;
       xhttp.onreadystatechange = function() {
@@ -186,7 +186,7 @@
     xhttp.send();
   }
 
-  class SpeedTask {
+  class F3XTask {
     constructor() { 
     }
     getState() {
@@ -238,5 +238,5 @@
     handle
   }
 
-  const mySpeedTask = new SpeedTask();
+  const myF3XTask = new F3XTask();
 
