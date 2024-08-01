@@ -34,7 +34,7 @@
 
 #define USE_RXTX_AS_GPIO  // for usage of rotary encoder instead of Serial
 
-#define APP_VERSION "V032"
+#define APP_VERSION "V033"
 
 /*
 Version History
@@ -50,6 +50,7 @@ Version History
  V030 28.03.2024: RS : Refactoring F3BSpeedTask -> F3XFixedDistanceTask, more consistent time strings and units (CSV)
  V031 04.05.2024: RS : added support for a radio buzzer 
  V032 31.07.2024: RS : F3F Task added, Logger refactored, TaskData handling generalized, address schema of RFTransceiver fixed.
+ V033 01.08.2024: RS : Support for F3X Loop Task, finalizing the course will start frame time of next starter automatically
 */
 
 /**
@@ -227,19 +228,18 @@ const char* ourSettingsMenuName = "Settings";
 const char* ourSettingsMenu0 = "0:F3B Speed Ttime";
 const char* ourSettingsMenu1 = "1:F3F Ttime";
 const char* ourSettingsMenu2 = "2:F3F LegLength";
-const char* ourSettingsMenu3 = "3:Auto Taskstart";
-const char* ourSettingsMenu4 = "4:Buzzers setup";
-const char* ourSettingsMenu5 = "5:Competition setup";
-const char* ourSettingsMenu6 = "6:Radio channel";
-const char* ourSettingsMenu7 = "7:Radio power";
-const char* ourSettingsMenu8 = "8:Display invert";
-const char* ourSettingsMenu9 = "9:Rotary button inv.";
-const char* ourSettingsMenu10 = "10:Update firmware";
-const char* ourSettingsMenu11 = "11:Update filesystem";
-const char* ourSettingsMenu12 = "12:WiFi on/off";
-const char* ourSettingsMenu13 = "13:Save settings";
-const char* ourSettingsMenu14 = "14:Main menu";
-const char* ourSettingsMenuItems[] = {ourSettingsMenu0, ourSettingsMenu1, ourSettingsMenu2, ourSettingsMenu3, ourSettingsMenu4, ourSettingsMenu5, ourSettingsMenu6, ourSettingsMenu7, ourSettingsMenu8, ourSettingsMenu9, ourSettingsMenu10, ourSettingsMenu11, ourSettingsMenu12, ourSettingsMenu13, ourSettingsMenu14};
+const char* ourSettingsMenu3 = "3:Buzzers setup";
+const char* ourSettingsMenu4 = "4:Competition setup";
+const char* ourSettingsMenu5 = "5:Radio channel";
+const char* ourSettingsMenu6 = "6:Radio power";
+const char* ourSettingsMenu7 = "7:Display invert";
+const char* ourSettingsMenu8 = "8:Rotary button inv.";
+const char* ourSettingsMenu9 = "9:Update firmware";
+const char* ourSettingsMenu10 = "10:Update filesystem";
+const char* ourSettingsMenu11 = "11:WiFi on/off";
+const char* ourSettingsMenu12 = "12:Save settings";
+const char* ourSettingsMenu13 = "13:Main menu";
+const char* ourSettingsMenuItems[] = {ourSettingsMenu0, ourSettingsMenu1, ourSettingsMenu2, ourSettingsMenu3, ourSettingsMenu4, ourSettingsMenu5, ourSettingsMenu6, ourSettingsMenu7, ourSettingsMenu8, ourSettingsMenu9, ourSettingsMenu10, ourSettingsMenu11, ourSettingsMenu12, ourSettingsMenu13};
 const uint8_t ourSettingsMenuSize = sizeof(ourSettingsMenuItems) / sizeof(char*);
 
 // TC_F3BSpeedMenu
@@ -441,11 +441,15 @@ char* getLegTimeStr(unsigned long aLegTime,  unsigned long aDelay, uint8_t aDist
 */
 char* getSCTimeStr(unsigned long aTime, bool aShowUnit=false ) {
   static char buffer[10];
+  unsigned long theTime = aTime;
+  if (aTime == F3X_TIME_NOT_SET) {
+    theTime = 0UL;
+  }
   String format= F("%02d.%02d");
   if (aShowUnit) {
     format= F("%02d.%02ds");
   }
-  sprintf(&buffer[0],format.c_str(), aTime/1000, aTime/10%100); 
+  sprintf(&buffer[0],format.c_str(), theTime/1000, theTime/10%100); 
   return buffer;
 }
 
@@ -688,10 +692,6 @@ void setWebDataReq() {
     ourConfig.f3fLegLength=value.toInt();
     ourF3FTask.setLegLength(ourConfig.f3fLegLength);
     logMsg(LOG_MOD_TASK, INFO, F("set f3f_leg_length :") + String(ourConfig.f3fLegLength));
-  } else 
-  if (name == F("f3x_task_autostart")) {
-    ourConfig.f3xTaskAutostart = (value == "true") ? true: false;
-    logMsg(LOG_MOD_TASK, INFO, F("set f3x_task_autostart :") + String(ourConfig.f3xTaskAutostart));
   } else 
   if (name == F("f3b_speed_tasktime")) {
     ourConfig.f3bSpeedTasktime=value.toInt();
@@ -1153,11 +1153,6 @@ void getWebDataReq() {
     if (argName.equals(F("id_f3f_leg_length"))) {
       response += argName + "=" + String(ourConfig.f3fLegLength) + MYSEP_STR;
     } else
-    if (argName.equals(F("id_f3x_task_autostart"))) {
-      if (ourConfig.f3xTaskAutostart == true) {
-        response += argName + "=" + String(F("checked")) + MYSEP_STR;
-      }
-    } else
     if (argName.equals(F("id_buzzer_setting"))) {
       String setting;
       switch (ourBuzzerSetting) {
@@ -1448,11 +1443,15 @@ void taskStateListener(F3XFixedDistanceTask::State aState) {
     case F3XFixedDistanceTask::TaskError:
     case F3XFixedDistanceTask::TaskWaiting:
     case F3XFixedDistanceTask::TaskTimeOverflow:
+      ourIsTimeCriticalOperationRunning = false;
+      break;
     case F3XFixedDistanceTask::TaskFinished:
-      if (ourLoopF3XTask) {
+      ourIsTimeCriticalOperationRunning = false;
+      if (ourF3XGenericTask->getLoopTasksEnabled()) {
         ourF3XGenericTask->stop();
         ourF3XGenericTask->start();
       }
+      break;
     case F3XFixedDistanceTask::TaskNotSet:
       ourIsTimeCriticalOperationRunning = false;
       break;
@@ -1564,7 +1563,6 @@ void setDefaultConfig() {
   ourConfig.f3bSpeedTasktime = 150;
   ourConfig.f3fTasktime = 180;
   ourConfig.f3fLegLength = 100;
-  ourConfig.f3xTaskAutostart= false;
   ourConfig.buzzerSetting = (uint8_t) BS_RADIOBUZZER;
   ourConfig.competitionSetting = false;
 }
@@ -1641,11 +1639,6 @@ void setupConfig() {
   cfg = F("Cfg: F3F ttime :");
   cfg.concat(String(ourConfig.f3fTasktime));
   cfg.concat(String(F("s")));
-  forceOLED(0, cfg);
-  yield();
-  delay(1100);
-  cfg = F("Cfg: F3X task autostart :");
-  cfg.concat( ourConfig.f3xTaskAutostart ? String(F("true")) : String(F("false")));
   forceOLED(0, cfg);
   yield();
   delay(1100);
@@ -2126,7 +2119,7 @@ void showF3FTask() {
             break;
         }
        
-        if (ourF3XGenericTask->getSignalledLegCount() >= F3X_COURSE_STARTED) {
+        if (ourF3XGenericTask->getSignalledLegCount() >= F3X_IN_AIR) {
           courseTimeStr = getSCTimeStr(courseTime, true);
         }
         break;
@@ -2194,15 +2187,14 @@ void showF3FTask() {
           }
 
           unsigned long lastcourseTime = ourF3XGenericTask->getLastLoopTaskCourseTime();
-          if (ourF3XGenericTask->getSignalledLegCount() == F3X_COURSE_NOT_STARTED && lastcourseTime != 0) {
+          if (ourF3XGenericTask->getSignalledLegCount() <= F3X_IN_AIR && lastcourseTime != 0) {
             ourOLED.setFont(oledFontNormal);
-            ourOLED.setCursor(10, 54);
-            ourOLED.print(F("F3F Task:"));
+            ourOLED.setCursor(0, 54);
+            ourOLED.print(F("Last Task:"));
             ourOLED.setFont(oledFontBig);
             ourOLED.print(F(" "));
             ourOLED.print(F("["));
             ourOLED.print(ourF3XGenericTask->getLoopTaskNum()-1);
-            ourOLED.print(F("["));
             ourOLED.print(F("] "));
             String lastcourseTimeStr = getSCTimeStr(lastcourseTime, true);
             ourOLED.print(lastcourseTimeStr);
@@ -2327,6 +2319,21 @@ void showF3BSpeedTask() {
         ourOLED.print(F("Task Time: "));
         ourOLED.print(F3XFixedDistanceTask::getHMSTimeStr(ourF3XGenericTask->getRemainingTasktime(), true));
 
+        {
+          unsigned long lastcourseTime = ourF3XGenericTask->getLastLoopTaskCourseTime();
+          if (ourF3XGenericTask->getSignalledLegCount() <= F3X_IN_AIR && lastcourseTime != 0) {
+            ourOLED.setFont(oledFontNormal);
+            ourOLED.setCursor(0, 54);
+            ourOLED.print(F("Last Task:"));
+            ourOLED.setFont(oledFontBig);
+            ourOLED.print(F(" "));
+            ourOLED.print(F("["));
+            ourOLED.print(ourF3XGenericTask->getLoopTaskNum()-1);
+            ourOLED.print(F("] "));
+            String lastcourseTimeStr = getSCTimeStr(lastcourseTime, true);
+            ourOLED.print(lastcourseTimeStr);
+          }
+        }
         break;
       case F3XFixedDistanceTask::TaskFinished:
         ourOLED.setFont(oledFontNormal);
@@ -2573,11 +2580,6 @@ void updatePushButton(unsigned long aNow) {
         logMsg(INFO, F("button press in F3F/F3BSpeeed task context"));
         reactOnMultiplePressed = history[buttonPressedCnt-1] + MULTI_PRESS_REACTION_TIME;
         switch(ourF3XGenericTask->getTaskState()) {
-          // case F3XFixedDistanceTask::TaskWaiting:
-          //   ourF3XGenericTask->autoStartNextTask(ourConfig.f3xTaskAutostart);
-          //   ourF3XGenericTask->start();  // -> TaskRunning
-          //   ourBuzzer.on(PinManager::SHORT); 
-          //   break;
           case F3XFixedDistanceTask::TaskFinished:
           case F3XFixedDistanceTask::TaskTimeOverflow:
             ourF3XGenericTask->stop();
@@ -2716,14 +2718,14 @@ void updatePushButton(unsigned long aNow) {
             break;
           case 1: // "1:Loop Task";
             logMsg(INFO, F("looping task: F3BSpeedTask"));
-            ourContext.set(TC_F3XMessage);
-            ourContext.setInfo(String(F("not yet implemented")));
-            // ourLoopF3XTask = true;
-            // ourContext.set(TC_F3BSpeedTask);
-            // ourF3XGenericTask->setLoopTasksEnabled(ourLoopF3XTask);
-            // ourF3XGenericTask->start();
-            // signalBuzzing(500);
-            // CLEAR_HISTORY;
+            // ourContext.set(TC_F3XMessage);
+            // ourContext.setInfo(String(F("not yet implemented")));
+            ourLoopF3XTask = true;
+            ourContext.set(TC_F3BSpeedTask);
+            ourF3XGenericTask->setLoopTasksEnabled(ourLoopF3XTask);
+            ourF3XGenericTask->start();
+            signalBuzzing(500);
+            CLEAR_HISTORY;
             break;
           case 2: // "2:Back"
             ourF3XGenericTask->stop();
@@ -2750,15 +2752,15 @@ void updatePushButton(unsigned long aNow) {
             CLEAR_HISTORY;
             break;
           case 1: // "1:Loop Task";
-            ourContext.set(TC_F3XMessage);
-            ourContext.setInfo(String(F("not yet implemented")));
-            // logMsg(INFO, F("looping task: F3FTask"));
-            // ourLoopF3XTask = true;
-            // ourContext.set(TC_F3FTask);
-            // ourF3XGenericTask->setLoopTasksEnabled(ourLoopF3XTask);
-            // ourF3XGenericTask->start();
-            // signalBuzzing(500);
-            // CLEAR_HISTORY;
+            // ourContext.set(TC_F3XMessage);
+            // ourContext.setInfo(String(F("not yet implemented")));
+            logMsg(INFO, F("looping task: F3FTask"));
+            ourLoopF3XTask = true;
+            ourContext.set(TC_F3FTask);
+            ourF3XGenericTask->setLoopTasksEnabled(ourLoopF3XTask);
+            ourF3XGenericTask->start();
+            signalBuzzing(500);
+            CLEAR_HISTORY;
             break;
           case 2: // "2:Back"
             ourF3FTask.stop();
@@ -2795,12 +2797,7 @@ void updatePushButton(unsigned long aNow) {
             resetRotaryEncoder();
             #endif
             break;
-          case 3: // "3:Auto Taskstart";
-            ourBuzzer.on(PinManager::SHORT);
-            ourConfig.f3xTaskAutostart = ourConfig.f3xTaskAutostart == true? false: true;
-            showDialog(2000, String(F("Tast Autostart: ")) + (ourConfig.f3xTaskAutostart ? String(F("enabled")) : String(F("disabled"))));
-            break;
-          case 4: // "4:Buzzers setup";
+          case 3: // "3:Buzzers setup";
             {
             uint8_t t = (uint8_t) ourBuzzerSetting;
             t++;
@@ -2827,11 +2824,11 @@ void updatePushButton(unsigned long aNow) {
             ourBuzzer.on(PinManager::SHORT);
             }
             break;
-          case 5: // "5:CompetitionSetup";
+          case 4: // "4:CompetitionSetup";
             ourConfig.competitionSetting = !ourConfig.competitionSetting;
             showDialog(2000, ourConfig.competitionSetting);
             break;
-          case 6: // "6:Radio channel";
+          case 5: // "5:Radio channel";
             ourBuzzer.on(PinManager::SHORT);
             if (!ourRadioSendSettings || ourRadioQuality > 99.0f) {
               ourContext.set(TC_F3XRadioChannelCfg);
@@ -2844,7 +2841,7 @@ void updatePushButton(unsigned long aNow) {
               ourContext.setInfo(String(F("no B-Line connected")));
             }
             break;
-          case 7: // "7:Radio power";
+          case 6: // "6:Radio power";
             ourBuzzer.on(PinManager::SHORT);
             if (!ourRadioSendSettings || ourRadioQuality > 99.0f) {
               ourContext.set(TC_F3XRadioPowerCfg);
@@ -2857,12 +2854,12 @@ void updatePushButton(unsigned long aNow) {
               ourContext.setInfo(String(F("no B-Line connected")));
             }
             break;
-          case 8: // "8:Display invert";
+          case 7: // "7:Display invert";
             ourBuzzer.on(PinManager::SHORT);
             ourConfig.oledFlipped = ourConfig.oledFlipped == true? false: true;
             ourOLED.setFlipMode(ourConfig.oledFlipped);
             break;
-          case 9: // "9:Rotary button inv.";
+          case 8: // "8:Rotary button inv.";
             ourBuzzer.on(PinManager::SHORT);
             ourConfig.rotaryEncoderFlipped = ourConfig.rotaryEncoderFlipped ? false: true;
             ourREInversion = ourConfig.rotaryEncoderFlipped ? -1 : 1;
@@ -2878,23 +2875,23 @@ void updatePushButton(unsigned long aNow) {
             }
             #endif
             break;
-          case 10: //  "10:Update firmware";
+          case 9: //  "9:Update firmware";
             otaUpdate(false); // firmware
             break;
-          case 11: //  "11:Update filesystem";
+          case 10: //  "10:Update filesystem";
             otaUpdate(true); // filesystem
             break;
-          case 12: //  "12:WiFi on/off";
+          case 11: //  "11:WiFi on/off";
             WiFi.mode(WIFI_OFF) ; // client mode only
             ourConfig.wifiIsActive = !ourConfig.wifiIsActive;
             showDialog(2000, String(F("WiFi is ")) + (ourConfig.wifiIsActive ? String(F("enabled")) : String(F("disabled"))));
             break;
-          case 13: //  "13:Save settings";
+          case 12: //  "12:Save settings";
             ourBuzzer.on(PinManager::SHORT);
             saveConfig();
             showDialog(2000, String(F("Config saved ")));
             break;
-          case 14: // "14:Main menu";
+          case 13: // "13:Main menu";
             ourBuzzer.on(PinManager::SHORT);
             #ifdef USE_RXTX_AS_GPIO
             resetRotaryEncoder();

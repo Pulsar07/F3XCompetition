@@ -27,7 +27,7 @@ typedef struct {
   uint8_t buzzerSetting;
   boolean competitionSetting;
   int16_t f3fTasktime;
-  boolean f3xTaskAutostart;
+  boolean dummy;
   int8_t f3fLegLength;
 } configData_t;
 
