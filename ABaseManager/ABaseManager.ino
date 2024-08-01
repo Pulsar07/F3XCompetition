@@ -245,7 +245,7 @@ const uint8_t ourSettingsMenuSize = sizeof(ourSettingsMenuItems) / sizeof(char*)
 // TC_F3BSpeedMenu
 const char* ourF3BSpeedMenuName = "F3B Speed";
 const char* ourF3BSpeedMenu0 = "0:Start Task";
-const char* ourF3BSpeedMenu1 = "1:Loop Taskt";
+const char* ourF3BSpeedMenu1 = "1:Loop Task";
 const char* ourF3BSpeedMenu2 = "2:Back";
 const char* ourF3BSpeedMenuItems[] = {ourF3BSpeedMenu0, ourF3BSpeedMenu1, ourF3BSpeedMenu2};
 const uint8_t ourF3BSpeedMenuSize = sizeof(ourF3BSpeedMenuItems) / sizeof(char*);
@@ -2101,27 +2101,27 @@ void showF3FTask() {
   courseTimeStr = getSCTimeStr(0UL, true);
   String info;
 
-  char taskState='?';
+  char stateInfo='?';
   // if (courseTime != lastFT || ourF3XGenericTask->getTaskState() != F3XFixedDistanceTask::TaskRunning) {
     lastFT = courseTime;
     switch (ourF3XGenericTask->getTaskState()) {
       case F3XFixedDistanceTask::TaskRunning:
-        taskState='R';
+        stateInfo='R';
         if (ourF3XGenericTask->getSignalledLegCount() >=0) {
-          taskState= ourF3XGenericTask->getSignalledLegCount() +'0';
+          stateInfo= ourF3XGenericTask->getSignalledLegCount() +'0';
         }
         switch (ourF3XGenericTask->getSignalledLegCount()) {
           case F3X_COURSE_NOT_STARTED:
-            info=F("next Press:in air");
+            info=F("next:A:in air");
             break;
           case F3X_IN_AIR:
-            info=F("next Press:1.A crossing");
+            info=F("next:A: enter course");
             break;
           default:
             if (ourF3XGenericTask->getSignalledLegCount()%2 == 0) {
-              info=F("next Press: A crossing");
+              info=F("next:B:turn");
             } else {
-              info=F("next Press: B crossing");
+              info=F("next:A:turn");
             }
             break;
         }
@@ -2131,24 +2131,24 @@ void showF3FTask() {
         }
         break;
       case F3XFixedDistanceTask::TaskWaiting:
-        taskState='W';
+        stateInfo='W';
         info=F("P:Start Tasktime");
         break;
       case F3XFixedDistanceTask::TaskTimeOverflow:
-        taskState='O';
+        stateInfo='O';
         info=F("PP:Reset");
         break;
       case F3XFixedDistanceTask::TaskError:
-        taskState='E';
+        stateInfo='E';
         break;
       case F3XFixedDistanceTask::TaskFinished:
-        taskState='F';
+        stateInfo='F';
         // courseTimeStr=ourF3XGenericTask->getLegTimeString(courseTime, F3X_TIME_NOT_SET, 0, 0, 0);
         courseTimeStr = getSCTimeStr(courseTime, true);
         info=F("");
         break;
       default:
-        taskState='?';
+        stateInfo='?';
         break;
     }
   
@@ -2170,7 +2170,7 @@ void showF3FTask() {
     ourOLED.print(info);
     ourOLED.setCursor(100, 63);
     ourOLED.print(F("["));
-    ourOLED.print(taskState);
+    ourOLED.print(stateInfo);
     ourOLED.print(F("]"));
     
     switch (ourF3FTask.getTaskState()) {
@@ -2248,33 +2248,28 @@ void showF3BSpeedTask() {
   courseTimeStr = getSCTimeStr(0UL, true);
   String info;
 
-  char taskState='?';
+  char stateInfo='?';
   // if (courseTime != lastFT || ourF3XGenericTask->getTaskState() != F3XFixedDistanceTask::TaskRunning) {
     lastFT = courseTime;
     switch (ourF3XGenericTask->getTaskState()) {
       case F3XFixedDistanceTask::TaskRunning:
-        taskState='R';
+        stateInfo='R';
         if (ourF3XGenericTask->getSignalledLegCount() >=0) {
-          taskState= ourF3XGenericTask->getSignalledLegCount() +'0';
+          stateInfo = '0' + ourF3XGenericTask->getSignalledLegCount();
         }
         switch (ourF3XGenericTask->getSignalledLegCount()) {
           case F3X_COURSE_NOT_STARTED:
-            info=F("next Press:1.A cossing");
+            info=F("next:A: enter course");
             break;
           case 0: // A-line crossed 1.time = 0m
-            info=F("next Press:1.B turn/1.A cross ");
-            break;
-          case 1: // B-Line crossed 1.time = 150m
-            info=F("next Press:1.A turn");
-            break;
-          case 2: // A-line crossed 2.time = 300m
-            info=F("next Press:2.B turn");
-            break;
-          case 3: // B-line crossed 2.time = 450m
-            info=F("next Press:A final cross");
+            info=F("next:A:repeat|B:turn");
             break;
           default:
-            info=F("P:---");
+            if (ourF3XGenericTask->getSignalledLegCount()%2 == 0) {
+              info=F("next:B:turn");
+            } else {
+              info=F("next:A:turn");
+            }
             break;
         }
        
@@ -2284,18 +2279,18 @@ void showF3BSpeedTask() {
         }
         break;
       case F3XFixedDistanceTask::TaskWaiting:
-        taskState='W';
+        stateInfo='W';
         info=F("P:Start Tasktime");
         break;
       case F3XFixedDistanceTask::TaskTimeOverflow:
-        taskState='O';
+        stateInfo='O';
         info=F("PP:Reset");
         break;
       case F3XFixedDistanceTask::TaskError:
-        taskState='E';
+        stateInfo='E';
         break;
       case F3XFixedDistanceTask::TaskFinished:
-        taskState='F';
+        stateInfo='F';
         // courseTimeStr=ourF3XGenericTask->getLegTimeString(courseTime, F3X_TIME_NOT_SET, 0, 0, 0);
         courseTimeStr = getSCTimeStr(courseTime, true);
         for (int i=0; i < 4; i++) {
@@ -2305,7 +2300,7 @@ void showF3BSpeedTask() {
         info=F("");
         break;
       default:
-        taskState='?';
+        stateInfo='?';
         break;
     }
   
@@ -2321,7 +2316,7 @@ void showF3BSpeedTask() {
     ourOLED.print(info);
     ourOLED.setCursor(100, 63);
     ourOLED.print(F("["));
-    ourOLED.print(taskState);
+    ourOLED.print(stateInfo);
     ourOLED.print(F("]"));
     
     switch (ourF3XGenericTask->getTaskState()) {
@@ -2669,7 +2664,7 @@ void updatePushButton(unsigned long aNow) {
               ourBuzzer.on(PinManager::SHORT); 
               logMsg(INFO, F("setting task: F3BSpeedMenu"));
               #ifdef USE_RXTX_AS_GPIO
-              resetRotaryEncoder(2);
+              resetRotaryEncoder(0);
               #endif
               setActiveTask(F3XFixedDistanceTask::F3BSpeedType);
               ourContext.set(TC_F3BSpeedMenu);
