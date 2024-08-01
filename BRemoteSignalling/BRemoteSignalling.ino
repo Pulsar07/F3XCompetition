@@ -4,7 +4,7 @@
 #include "PinManager.h"
 #include "Config.h"
 
-#define APP_VERSION F("V028")
+#define APP_VERSION F("V031")
 
 static const char myName[] = "B-Line";
 
@@ -44,6 +44,7 @@ unsigned long ourSecond = 0;
 
 F3XRemoteCommand ourRemoteCmd;
 unsigned long ourTimedReset = 0;
+unsigned long ourTimedResponse = 0;
 uint16_t ourBatteryVoltage=0;
 uint16_t ourBatteryVoltageRaw=0;
 
@@ -146,6 +147,7 @@ void setupSignallingButton() {
 void setupLog(const char* aName) {
   Logger::getInstance().setup(aName);
   Logger::getInstance().doSerialLogging(true);
+  Logger::getInstance().setLogLevel(LOG_MOD_ALL, DEBUG);
 }
 
 void setup() {
@@ -154,6 +156,7 @@ void setup() {
   while (!Serial) delay(10); // wait for serial monitor
   delay(1000);
   Serial.println();
+  Serial.println("BRemoteSignalling");
 
   setupLog(myName);
 
@@ -217,13 +220,14 @@ void updateRadio(unsigned long aNow) {
         ourRadio.setAck(radioAck);
 
 
-        logMsg(INFO, String("received CmdSetPower: power: ") + String(radioPower));
-        logMsg(INFO, String("received CmdSetPower: channel: ") + String(radioChannel));
-        logMsg(INFO, String("received CmdSetPower: datarate: ") + String(radioDatarate));
-        logMsg(INFO, String("received CmdSetPower: ack: ") + String(radioAck));
-        logMsg(INFO, String("received CmdSetPower: power,chan,rate,ack: ") + *ourRemoteCmd.getArg());
+        logMsg(INFO, String(F("received CmdSetPower: power: ")) + String(radioPower));
+        logMsg(INFO, String(F("received CmdSetPower: channel: ")) + String(radioChannel));
+        logMsg(INFO, String(F("received CmdSetPower: datarate: ")) + String(radioDatarate));
+        logMsg(INFO, String(F("received CmdSetPower: ack: ")) + String(radioAck));
+        logMsg(INFO, String(F("received CmdSetPower: power,chan,rate,ack: ")) + *ourRemoteCmd.getArg());
         break;
       case F3XRemoteCommandType::CmdRestartMC:
+        logMsg(INFO, String(F("received CmdRestartMC: ack: ")) + String(radioAck));
         ourTimedReset = aNow + 500; // reset in 500ms
         break;
       case F3XRemoteCommandType::CmdCycleTestRequest:
@@ -244,11 +248,8 @@ void updateRadio(unsigned long aNow) {
         {
         // String* arg = ourRemoteCmd.getArg();
         LOGGY(INFO, String("received BLineStateReq:"));
-          boolean sendSuccess;
-          sendSuccess = ourRadio.transmit(*ourRemoteCmd.createCommand(F3XRemoteCommandType::BLineStateResp, String(ourBatteryVoltageRaw)), 5);
-          if (!sendSuccess) {
-            logMsg(INFO, String(F("sending BLineStateResp not successsfull. Retransmissions: ")) + String(ourRadio.getRetransmissionCount()));
-          }
+          ourTimedResponse = 1; // respond immediately
+          ourTimedResponse = aNow + 100;
         }
         break;
       default:
@@ -274,6 +275,16 @@ void updateTimedEvents(unsigned long aNow) {
   if (ourTimedReset != 0 && aNow > ourTimedReset) {
      ourTimedReset = 0;
      resetFunc();
+  }
+  if (ourTimedResponse != 0 && aNow > ourTimedResponse) {
+     ourTimedResponse = 0;
+     boolean sendSuccess;
+     sendSuccess = ourRadio.transmit(*ourRemoteCmd.createCommand(F3XRemoteCommandType::BLineStateResp, String(ourBatteryVoltageRaw)), 5);
+     if (!sendSuccess) {
+       logMsg(INFO, String(F("sending BLineStateResp not successsfull. Retransmissions: ")) + String(ourRadio.getRetransmissionCount()));
+     } else {
+       logMsg(INFO, String(F("sending BLineStateResp successsfull. Retransmissions: ")) + String(ourRadio.getRetransmissionCount()));
+     }
   }
 }
 

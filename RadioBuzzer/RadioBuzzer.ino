@@ -141,6 +141,7 @@ void updateBatteryIn(unsigned long aNow) {
 void setupLog(const char* aName) {
   Logger::getInstance().setup(aName);
   Logger::getInstance().doSerialLogging(true);
+  Logger::getInstance().setLogLevel(LOG_MOD_ALL, DEBUG);
 }
 
 void setup() {
