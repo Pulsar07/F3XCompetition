@@ -2714,6 +2714,7 @@ void updatePushButton(unsigned long aNow) {
             logMsg(LOG_MOD_TASK, INFO, F("starting task: F3BSpeedTask"));
             ourContext.set(TC_F3BSpeedTask);
             ourF3XGenericTask->start();
+            signalBuzzing(500);
             CLEAR_HISTORY;
             break;
           case 1: // "1:Loop Task";
