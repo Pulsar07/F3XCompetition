@@ -98,7 +98,7 @@ void setupConfig() {
 }
 
 void setupRF() {
-  ourRadio.begin(1);
+  ourRadio.begin(RFTransceiver::F3XBLineController);
   logMsg(INFO, F("setup for RCTTransceiver/nRF24L01 successful "));   
 }
 
@@ -127,6 +127,12 @@ void updateBatteryIn(unsigned long aNow) {
     ourBatteryVoltage=((float) ourBatteryVoltageRaw)/1024.0*V_REF*ourConfig.batCalibration;
   
     logMsg(INFO, String(F("battery voltage: ")) + String(ourBatteryVoltage) + String("/") + String(ourBatteryVoltageRaw));
+    
+    // logMsg(INFO, "sending TESTEST  SignalB");
+    // if (!ourRadio.transmit(ourRemoteCmd.createCommand(F3XRemoteCommandType::SignalB, String(ourSignalBCounter))->c_str(), 5)) {
+    //   logMsg(ERROR, String(F("Test Signal was NOT send: ")));
+    // }
+
   } 
 
 }
@@ -148,6 +154,7 @@ void setupLog(const char* aName) {
   Logger::getInstance().setup(aName);
   Logger::getInstance().doSerialLogging(true);
   Logger::getInstance().setLogLevel(LOG_MOD_ALL, DEBUG);
+  Logger::getInstance().setLogLevel(LOG_MOD_RADIO, DEBUG);
 }
 
 void setup() {

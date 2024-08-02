@@ -64,51 +64,10 @@ void RFTransceiver::setDefaults() {
   myRadio->enableDynamicPayloads();
 }
 
-void RFTransceiver::begin(uint8_t aNodeNum) {
-  // byte address[][6]={"F3X-A", "F3X-B"};
-  // memcpy(&myAddress[0][0], &address[aNodeNum%2][0], 6);
-  // memcpy(&myAddress[1][0], &address[(aNodeNum+1)%2][0], 6);
-  //
-  byte address[][6]={"F3X-A", "F3X-B", "G3X-B"};
-
-/*
- * some thoughts to the RF24 addressing schema:
- * Communication is done via pipes. 
- * For a one-to-one communication of two peers a pipe with the same
- * address has to be used on both sides
- * The address does not address a source or a target, but the communication 
- * relation / pipe between them
- *
- *
- */
-  switch ( aNodeNum) {
-    case 0:
-      // better not to use something related to a peer name, 
-      // RF24 supports 6 pipes.
-      // Pipes 0 and 1 will store a full 5-byte address. 
-      // Pipes 2-5 will technically only store a single byte, 
-      // borrowing up to 4 additional bytes from pipe 1 per 
-      // the assigned address width. Pipes 1-5 should share 
-      // the same address, except the first byte. 
-      // Only the first byte in the array should be unique
-      memcpy(&myAddress[0][0], "F3X-A", 6);  // better 1abcd : BaseManager  <-> ALineController 
-      memcpy(&myAddress[1][0], "F3X-B", 6);  // better 2efgh : BaseManager  <-> BLineController
-      memcpy(&myAddress[2][0], "G3X-B", 6);  // better 3efgh : BaseManager  <-> RemoteBuzzer
-      break;
-    case 1:
-      memcpy(&myAddress[0][0], "F3X-A", 6);
-      memcpy(&myAddress[1][0], "-----", 6);
-      memcpy(&myAddress[2][0], "-----", 6);
-      break;
-    case 2:
-      memcpy(&myAddress[0][0], "G3X-B", 6);
-      memcpy(&myAddress[1][0], "-----", 6);
-      memcpy(&myAddress[2][0], "-----", 6);
-      break;
-  }
+void RFTransceiver::begin(F3XDeviceType aDeviceType) {
 
   if (!myRadio->begin()) {
-    Logger::getInstance().log(INFO, F("radio hardware not responding!"));
+    Logger::getInstance().log(LOG_MOD_RADIO, INFO, F("radio hardware not responding!"));
     delay(100);
     while (1) {} // hold program in infinite loop to prevent subsequent errors
   }
@@ -120,28 +79,125 @@ void RFTransceiver::begin(uint8_t aNodeNum) {
   } else {
     printout += F(": NOT connected!");
   }
-  Logger::getInstance().log(INFO, printout);
+  Logger::getInstance().log(LOG_MOD_RADIO, INFO, printout);
 
   setDefaults();
 
-  switch ( aNodeNum) {
-    case 0:
-      myRadio->openReadingPipe(1, &myAddress[0][0]); // set the address
-      myRadio->openReadingPipe(2, &myAddress[1][0]); // set the address
-      myRadio->openReadingPipe(3, &myAddress[2][0]); // set the address
+  // next major release 
+  // byte rf24addr[][6]={"1abcd", "2efgh", "3efgh", "4efgh"}; //  for future releases
+  // byte rf24addr[][6]={"F3X-A", "F3X-B", "G3X-B", "H3X-B"};
+  byte rf24addr[][6]={"F3X-A", "F3X-B", "G3X-B", "H3X-B"};
+  memcpy(&myAddress[0][0], &rf24addr[0][0], 6);  // better 1abcd : BaseManager  <-> ALineController 
+  memcpy(&myAddress[1][0], &rf24addr[1][0], 6);  // better 2efgh : BaseManager  <-> BLineController
+  memcpy(&myAddress[2][0], &rf24addr[2][0], 6);  // better 3efgh : BaseManager  <-> RemoteBuzzer
+  memcpy(&myAddress[3][0], &rf24addr[3][0], 6);  // better 3efgh : BaseManager  <-> RemoteBuzzer
+
+	myRadio->setAddressWidth(5);
+  switch (aDeviceType) {
+    case F3XBaseManager:
+      myRadio->openReadingPipe(0, &myAddress[0][0]); // set the address
+      myRadio->openReadingPipe(1, &myAddress[1][0]); // set the address
+      myRadio->openReadingPipe(2, &myAddress[2][0]); // set the address
       myRadio->openWritingPipe(&myAddress[0][0]);
       break;
-    case 1:
-      myRadio->openReadingPipe(1, &myAddress[0][0]); // set the address
-      myRadio->openWritingPipe(&myAddress[0][0]);
+    case F3XALineController:
+      Logger::getInstance().log(LOG_MOD_RADIO, ERROR, F("F3XALineController not yet implemented"));
+      myRadio->openReadingPipe(0, &myAddress[1][0]); // set the address
+      myRadio->openWritingPipe(&myAddress[1][0]);
       break;
-    case 2:
-      myRadio->openReadingPipe(1, &myAddress[0][0]); // set the address
-      myRadio->openWritingPipe(&myAddress[0][0]);  // this address will implicit set as reading pipe 0
+    case F3XBLineController:
+      myRadio->openReadingPipe(0, &myAddress[1][0]); // set the address
+      myRadio->openReadingPipe(1, &myAddress[0][0]); // set the address  // to support backward comp.
+      myRadio->openWritingPipe(&myAddress[1][0]);
+      break;
+    case F3XRemoteBuzzer:
+      myRadio->openReadingPipe(0, &myAddress[2][0]); // set the address
+      myRadio->openWritingPipe(&myAddress[2][0]);
       break;
   }
   myRadio->startListening(); // set as receiver
 }
+
+
+// void RFTransceiver::begin(uint8_t aNodeNum) {
+//   // byte address[][6]={"F3X-A", "F3X-B"};
+//   // memcpy(&myAddress[0][0], &address[aNodeNum%2][0], 6);
+//   // memcpy(&myAddress[1][0], &address[(aNodeNum+1)%2][0], 6);
+//   //
+//   byte address[][6]={"F3X-A", "F3X-B", "G3X-B"};
+//   return;
+// 
+// /*
+//  * some thoughts to the RF24 addressing schema:
+//  * Communication is done via pipes. 
+//  * For a one-to-one communication of two peers a pipe with the same
+//  * address has to be used on both sides
+//  * The address does not address a source or a target, but the communication 
+//  * relation / pipe between them
+//  *
+//  *
+//  */
+//   switch ( aNodeNum) {
+//     case 0:
+//       // better not to use something related to a peer name, 
+//       // RF24 supports 6 pipes.
+//       // Pipes 0 and 1 will store a full 5-byte address. 
+//       // Pipes 2-5 will technically only store a single byte, 
+//       // borrowing up to 4 additional bytes from pipe 1 per 
+//       // the assigned address width. Pipes 1-5 should share 
+//       // the same address, except the first byte. 
+//       // Only the first byte in the array should be unique
+//       memcpy(&myAddress[0][0], "F3X-A", 6);  // better 1abcd : BaseManager  <-> ALineController 
+//       memcpy(&myAddress[1][0], "F3X-B", 6);  // better 2efgh : BaseManager  <-> BLineController
+//       memcpy(&myAddress[2][0], "G3X-B", 6);  // better 3efgh : BaseManager  <-> RemoteBuzzer
+//       break;
+//     case 1:
+//       memcpy(&myAddress[0][0], "F3X-A", 6);
+//       memcpy(&myAddress[1][0], "-----", 6);
+//       memcpy(&myAddress[2][0], "-----", 6);
+//       break;
+//     case 2:
+//       memcpy(&myAddress[0][0], "G3X-B", 6);
+//       memcpy(&myAddress[1][0], "-----", 6);
+//       memcpy(&myAddress[2][0], "-----", 6);
+//       break;
+//   }
+// 
+//   if (!myRadio->begin()) {
+//     Logger::getInstance().log(INFO, F("radio hardware not responding!"));
+//     delay(100);
+//     while (1) {} // hold program in infinite loop to prevent subsequent errors
+//   }
+//   String printout = F("nRF24L01 – 2.4 GHz Radio initialized\n   ");
+//   printout += myRadio->isPVariant()?String(F("(+ Variant)")) : String(F("(normal Variant)"));
+// 
+//   if (myRadio->isChipConnected()) {
+//     printout += F(": connected");
+//   } else {
+//     printout += F(": NOT connected!");
+//   }
+//   Logger::getInstance().log(INFO, printout);
+// 
+//   setDefaults();
+// 
+//   switch ( aNodeNum) {
+//     case 0:
+//       myRadio->openReadingPipe(1, &myAddress[0][0]); // set the address
+//       myRadio->openReadingPipe(2, &myAddress[1][0]); // set the address
+//       myRadio->openReadingPipe(3, &myAddress[2][0]); // set the address
+//       myRadio->openWritingPipe(&myAddress[0][0]);
+//       break;
+//     case 1:
+//       myRadio->openReadingPipe(1, &myAddress[0][0]); // set the address
+//       myRadio->openWritingPipe(&myAddress[0][0]);
+//       break;
+//     case 2:
+//       myRadio->openReadingPipe(1, &myAddress[0][0]); // set the address
+//       myRadio->openWritingPipe(&myAddress[0][0]);  // this address will implicit set as reading pipe 0
+//       break;
+//   }
+//   myRadio->startListening(); // set as receiver
+// }
 
 void RFTransceiver::setWritingPipe(uint8_t aPipeNumber) {
   myRadio->stopListening();
@@ -254,7 +310,13 @@ boolean RFTransceiver::transmit(String aData, uint8_t aRetrans) {
 }
 
 boolean RFTransceiver::available() {
-  return myRadio->available();
+  boolean retVal=false;
+  uint8_t pipe;
+  retVal = myRadio->available(&pipe);
+  if (retVal) {
+    logMsg(LOG_MOD_RADIO, INFO, String(F("data  from pipe:")) + String(pipe));
+  }
+  return retVal;
 }
 
 uint8_t RFTransceiver::getRetransmissionCount() {

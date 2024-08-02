@@ -34,7 +34,7 @@
 
 #define USE_RXTX_AS_GPIO  // for usage of rotary encoder instead of Serial
 
-#define APP_VERSION "V033"
+#define APP_VERSION "V034"
 
 /*
 Version History
@@ -51,6 +51,7 @@ Version History
  V031 04.05.2024: RS : added support for a radio buzzer 
  V032 31.07.2024: RS : F3F Task added, Logger refactored, TaskData handling generalized, address schema of RFTransceiver fixed.
  V033 01.08.2024: RS : Support for F3X Loop Task, finalizing the course will start frame time of next starter automatically
+ V034 02.08.2024: RS : nRF24 address scheme modified to support old versions of remote devices 
 */
 
 /**
@@ -478,7 +479,7 @@ void setupOLED() {
 
 void setupRadio() {
   logMsg(INFO, F("setup RCTTransceiver/nRF24L01")); 
-  ourRadio.begin(0);  // set 0 for A-Line-Manager
+  ourRadio.begin(RFTransceiver::F3XBaseManager);  // set 0 for A-Line-Manager
   logMsg(INFO, F("setup for RCTTransceiver/nRF24L01 successful")); 
 
   // in the RFTransceiver implementation the default values for the radio settings are defined 
@@ -1696,7 +1697,6 @@ void updateRadio(unsigned long aNow) {
   while (ourRadio.available()) {          
     ourRemoteCmd.write(ourRadio.read());
   }
-
   
   // if data from remote side builds a complete command handle it
   if (ourRemoteCmd.available()) {
