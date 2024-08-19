@@ -1,6 +1,9 @@
 #include <Logger.h>
 #include "F3XFixedDistanceTask.h"
 
+/*
+ * 18.08.2024 RS: added F3X_IN_AIR_A_REV_CROSSING state
+ */
 
 /**
  * constructor for a F3X distance task with a fixed number of legs aLegNumberMax and a leg lenght aLegLength
@@ -9,9 +12,10 @@ F3XFixedDistanceTask::F3XFixedDistanceTask(F3XType aType) {
   mySignalAListener = nullptr;
   mySignalBListener = nullptr;
   myStateChangeListener = nullptr;
-  myInAirIndicationListener = nullptr;
+  myTimeProceedingListener = nullptr;
   myTasktime = 180; // default tasktime 3 minutes
   myType = aType;
+  myLaunchTime = 0L;
   switch (myType) {
     case F3BSpeedType:
       myLegLength = 150;
@@ -141,8 +145,8 @@ void F3XFixedDistanceTask::addStateChangeListener( void (*aListener)(State)) {
   myStateChangeListener = aListener;
 }
 
-void F3XFixedDistanceTask::addInAirIndicationListener( void (*aListener)()) {
-  myInAirIndicationListener = aListener;
+void F3XFixedDistanceTask::addTimeProceedingListener( void (*aListener)()) {
+  myTimeProceedingListener = aListener;
 }
 
 /**
@@ -188,6 +192,9 @@ void F3XFixedDistanceTask::timeOverflow() {
   setTaskState(TaskTimeOverflow);
 }
 
+/**
+ * method should be called if a signal event is given by a controller or local switch
+ */
 void F3XFixedDistanceTask::signal(Signal aType) {
   logMsg(LOG_MOD_SIG, INFO, String("FDT::signal(") + (aType == SignalA?'A':'B')+ String(")"));
   if (myTaskState != TaskRunning) {
@@ -205,29 +212,34 @@ void F3XFixedDistanceTask::signal(Signal aType) {
 
   if (aType == SignalA) {
     if (myType == F3BSpeedType 
-        && ( mySignalledLegCount == F3X_COURSE_NOT_STARTED // (-2)
+        && ( mySignalledLegCount == F3X_COURSE_INIT // (-3)
              || mySignalledLegCount == F3X_COURSE_STARTED) ) { // (0) in case of reflight or first A-Line reverse crossing
       mySignalledLegCount = F3X_COURSE_STARTED;  // =0 legs , but started, first A-Line crossing
       mySignalTimeStamps[mySignalledLegCount] = millis();
       mySignalAListener();
     } else 
     if (myType == F3FType 
-        && mySignalledLegCount == F3X_COURSE_NOT_STARTED // (-2)
+        && mySignalledLegCount == F3X_COURSE_INIT // (-3)
       ) { 
-  
-      mySignalledLegCount = F3X_IN_AIR;  // (-1) model started but not yet in course
+      mySignalledLegCount = F3X_IN_AIR;  // (-2) model started but not yet in course and not yet overfly A-Line
       inAir();
-      mySignalAListener();
+      mySignalAListener();  // force a A-Line signal
     } else 
     if (myType == F3FType 
-        && mySignalledLegCount == F3X_IN_AIR // (-1)
+        && mySignalledLegCount == F3X_IN_AIR // (-2)
+      ) { 
+      mySignalledLegCount = F3X_IN_AIR_A_REV_CROSSING;  // (-1) model in air and crossed A-Line in reverse direction to B-Line
+      mySignalAListener();  // force a A-Line signal
+    } else 
+    if (myType == F3FType 
+        && mySignalledLegCount == F3X_IN_AIR_A_REV_CROSSING // (-1)
       ) { 
       mySignalledLegCount = F3X_COURSE_STARTED;  // 0 legs , but started, first A-Line crossing
       if (mySignalTimeStamps[mySignalledLegCount] == -1UL) {
         // only set if not auto set 
         mySignalTimeStamps[mySignalledLegCount] = millis();
       }
-      mySignalAListener();
+      mySignalAListener();  // force a A-Line signal
     } else 
     if (mySignalledLegCount > 0) { // task is ongoing
       if (mySignalledLegCount%2 == 1) {  // REGULAR : A line crossing n.th time, start of  1/3/5/... leg
@@ -301,9 +313,11 @@ void F3XFixedDistanceTask::inAir() {
       break;
   }
   logMsg(LOG_MOD_SIG, INFO, String("FDT::inAir"));
-  mySignalAListener(); // force a audio signal at model start
 }
 
+/**
+ * get the in air time in ms
+ */
 unsigned long F3XFixedDistanceTask::getInAirTime() {
   unsigned long retVal = 0L;
 
@@ -317,7 +331,7 @@ unsigned long F3XFixedDistanceTask::getInAirTime() {
 }
 
 void F3XFixedDistanceTask::resetSignals() {
-  mySignalledLegCount = F3X_COURSE_NOT_STARTED;
+  mySignalledLegCount = F3X_COURSE_INIT;
   for (int i=0; i<myLegNumberMax+1; i++) {
     mySignalTimeStamps[i] = -1UL;
   }
@@ -327,17 +341,29 @@ void F3XFixedDistanceTask::resetSignals() {
   myLaunchTime = 0L;
 }
 
+
+/**
+ * return the remaining Tasktime in ms
+ */
 long F3XFixedDistanceTask::getRemainingTasktime() {
   long retVal = 0;
   switch (myTaskState) {
     case TaskRunning:
-      retVal = myTaskStartTime+myTasktime*1000-millis();
-      if (retVal < 0) {
+      if ( myLaunchTime > 0L) {
+        retVal = myTaskStartTime+myTasktime*1000-myLaunchTime;
+      } else {
+        retVal = myTaskStartTime+myTasktime*1000-millis();
+      }
+      if (retVal <= 0) {
         retVal = 0;
       }
       break;
     case TaskFinished:
-      retVal = myTaskStartTime+myTasktime*1000 - mySignalTimeStamps[myLegNumberMax];
+      if ( myLaunchTime > 0L) {
+        retVal = myTaskStartTime+myTasktime*1000-myLaunchTime;
+      } else {
+        retVal = myTaskStartTime+myTasktime*1000 - mySignalTimeStamps[myLegNumberMax];
+      }
       break;
     case TaskTimeOverflow:
       retVal = 0; 
@@ -358,44 +384,78 @@ F3XFixedDistanceTask::State F3XFixedDistanceTask::getTaskState() {
 }
 
 void F3XFixedDistanceTask::update() {
-  if ( myTaskState == TaskRunning && getRemainingTasktime() == 0 ) {
-    logMsg(LOG_MOD_SIG, ERROR, String(F("FDT: Task time overflow")));
-    timeOverflow();
-  }
-  if ( myTaskState == TaskRunning && getSignalledLegCount() < F3X_COURSE_STARTED && myLaunchTime != 0L) {
-    uint8_t inAirSecs = getInAirTime()/1000;  // 0,1,2,3,4,5,6, ... 30
-    if (inAirSecs <= 30 && inAirSecs != myListenerIndication) {
-      switch (inAirSecs) {
-        case 5:
-        case 10:
-        case 15:
-        case 20:
-        case 25:
-        case 26:
-        case 27:
-        case 28:
-        case 29:
-          myListenerIndication = inAirSecs;
-          if (myInAirIndicationListener != nullptr) {
-            logMsg(LOG_MOD_SIG, DEBUG, String(F("FDT: inAirIndication: ")) + String(inAirSecs));
-            myInAirIndicationListener();
-          } else {
-            logMsg(LOG_MOD_SIG, ERROR, String(F("FDT: myInAirIndicationListener is null !!! ")));
-          }
-          break;
-        case 30:
-          myListenerIndication = inAirSecs;
-          if (myInAirIndicationListener != nullptr) {
-            logMsg(LOG_MOD_SIG, DEBUG, String(F("FDT: inAirIndication: ")) + String(inAirSecs));
-            myInAirIndicationListener();
-          } else {
-            logMsg(LOG_MOD_SIG, ERROR, String(F("FDT: myInAirIndicationListener is null !!! ")));
-          }
-          logMsg(LOG_MOD_SIG, DEBUG, String(F("FDT: AutoASignal:inAirIndication: ")) + String(inAirSecs));
-          startCourseTime();
-          break;
+  switch (myType) {
+    case F3BSpeedType:
+      if ( myTaskState == TaskRunning 
+           && getRemainingTasktime() == 0 ) {
+        logMsg(LOG_MOD_SIG, INFO, String(F("FDT: F3B Speed Task time overflow")));
+        timeOverflow();
       }
-    }
+      break;
+    case F3FType:
+      if ( myTaskState == TaskRunning 
+           && mySignalledLegCount == F3X_COURSE_INIT
+           && getRemainingTasktime()/1000 == 0 ) {
+        logMsg(LOG_MOD_SIG, INFO, String(F("FDT: F3F Task time overflow")));
+        timeOverflow();
+      }
+      if ( myTaskState == TaskRunning && getSignalledLegCount() == F3X_COURSE_INIT) {
+        uint8_t taskTimeSecs = getRemainingTasktime()/1000;  // 30,29,28,...,1
+        if (taskTimeSecs <= 5 && taskTimeSecs != myListenerIndication) {
+          switch (taskTimeSecs) {
+            case 5:
+            case 4:
+            case 3:
+            case 2:
+            case 1:
+              myListenerIndication = taskTimeSecs;
+              if (myTimeProceedingListener != nullptr) {
+                logMsg(LOG_MOD_SIG, DEBUG, String(F("FDT: task time indication: ")) + String(taskTimeSecs));
+                myTimeProceedingListener();
+              } else {
+                logMsg(LOG_MOD_SIG, ERROR, String(F("FDT: myTimeProceedingListener is null !!! ")));
+              }
+              break;
+           }
+        }
+      } else 
+      // F3F in air time handling 
+      if ( myTaskState == TaskRunning && getSignalledLegCount() < F3X_COURSE_STARTED && myLaunchTime != 0L) {
+        uint8_t inAirSecs = getInAirTime()/1000;  // 0,1,2,3,4,5,6, ... 30
+        if (inAirSecs <= 30 && inAirSecs != myListenerIndication) {
+          switch (inAirSecs) {
+            case 5:
+            case 10:
+            case 15:
+            case 20:
+            case 25:
+            case 26:
+            case 27:
+            case 28:
+            case 29:
+              myListenerIndication = inAirSecs;
+              if (myTimeProceedingListener != nullptr) {
+                logMsg(LOG_MOD_SIG, DEBUG, String(F("FDT: inAirIndication: ")) + String(inAirSecs));
+                myTimeProceedingListener();
+              } else {
+                logMsg(LOG_MOD_SIG, ERROR, String(F("FDT: myTimeProceedingListener is null !!! ")));
+              }
+              break;
+            case 30:
+              myListenerIndication = inAirSecs;
+              if (myTimeProceedingListener != nullptr) {
+                logMsg(LOG_MOD_SIG, DEBUG, String(F("FDT: inAirIndication: ")) + String(inAirSecs));
+                myTimeProceedingListener();
+              } else {
+                logMsg(LOG_MOD_SIG, ERROR, String(F("FDT: myTimeProceedingListener is null !!! ")));
+              }
+              logMsg(LOG_MOD_SIG, DEBUG, String(F("FDT: AutoASignal:inAirIndication: ")) + String(inAirSecs));
+              startCourseTime();
+              break;
+          }
+        }
+      }
+      break;
   }
 }
 

@@ -18,7 +18,7 @@ class PinManager {
     void set(bool aState, bool aForce=false) {
       if (myPinState != aState || aForce) {
         myPinState = aState;
-				digitalWrite(myPin, myPinState);
+        digitalWrite(myPin, myPinState);
         // logMsg(INFO, String(F("PinManager::set=")) + String(myPinState)); 
       } 
     }
@@ -75,10 +75,10 @@ class PinManager {
           myStartTime = millis();
           myDuration = aDuration;
           // logMsg(INFO, String(F("PinManager::set():IDLE ")) + String(myStartTime) + "/" + String(myDuration)); 
-				  set(myOnState);
+          set(myOnState);
           break;
         case ON:
-          int16_t remain = myDuration - (millis() - myStartTime);
+          unsigned long remain = myDuration - (millis() - myStartTime);
           if (remain < aDuration ) {
             myStartTime = millis();
             myDuration = aDuration;
@@ -97,9 +97,9 @@ class PinManager {
           if ((now - myStartTime) >= myDuration) {
             // logMsg(INFO, String(F("PinManager::update():ON ->IDLE ")) + String(now) + "/" + String(myStartTime) + "/" + String(myDuration)); 
             myState = IDLE;
-				    set(myOffState);
+            set(myOffState);
           } else {
-				    set(myOnState);
+            set(myOnState);
           }
           break;
         case PATTERN:

@@ -15,8 +15,9 @@
 #define F3X_GFT_RUNNING_TIME -2
 #define F3X_GFT_FINAL_TIME -3
 #define F3X_GFT_MIN_ARG -3
-#define F3X_COURSE_NOT_STARTED -2
-#define F3X_IN_AIR -1
+#define F3X_COURSE_INIT -3
+#define F3X_IN_AIR -2
+#define F3X_IN_AIR_A_REV_CROSSING -1
 #define F3X_COURSE_STARTED 0 
 
 #define F3X_LEG_MIN  -1
@@ -71,7 +72,7 @@ public:
   void addSignalAListener( void (*aListener)());
   void addSignalBListener( void (*aListener)());
   void addStateChangeListener( void (*aListener)(State));
-  void addInAirIndicationListener( void (*aListener)());
+  void addTimeProceedingListener( void (*aListener)());
   void signal(Signal aSignal);
   void signal();
   void timeOverflow();
@@ -107,12 +108,11 @@ protected:
   void (*mySignalAListener)(void);
   void (*mySignalBListener)(void);
   void (*myStateChangeListener)(State);
-  void (*myInAirIndicationListener)(void);
+  void (*myTimeProceedingListener)(void);
   int8_t mySignalledLegCount;
   State myTaskState;
   unsigned long myLaunchTime;
   uint8_t myListenerIndication;
-  unsigned long myLastInAirIndication;
   uint16_t myTasktime;
   uint16_t myLegLength;
   uint8_t myLegNumberMax;

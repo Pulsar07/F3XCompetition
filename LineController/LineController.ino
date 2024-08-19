@@ -1,46 +1,41 @@
-/**     
- * \file RadioBuzzer.ino
- *    
- * \brief tool support trainings data measurement  
- *
- * \author Author: Rainer Stransky
- *      
- * \copyright This project is released under the GNU Public License v3
- *          see https://www.gnu.org/licenses/gpl.html.
- * Contact: opensource@so-fa.de
- *      
- */ 
-    
-
 #include <EEPROM.h>
+#include <Bounce2.h>
 #include <Logger.h>
 #include "PinManager.h"
 #include "Config.h"
 
-#define APP_VERSION F("V010")
+#define APP_VERSION F("V032")
 
-static const char myName[] = "RadioBuzzer";
+static const char myName[] = "B-Line";
 
 
 // Used Ports as as summary for a Arduino Nano
 /*
-8 : Buzzer Signal Out
+2 : Signalling Button B-Line
+3 : Feedback LED B-Line-Controller
+8 : 
 9 : RF24-NRF24L01 (CE brownwhite)
 10 : RF24-NRF24L01 (CNS brown)
 11 : RF24-NRF24L01 MOSI (blue)
 12 : RF24-NRF24L01 MISO (green-white)
 13 : RF24-NRF24L01 SCK  (blue-white)
-A0 : Analog Battery in with a 2K2 / 2K2 Ohm
-     voltage divider for a LiIon 2s1p
+A7 : Analog Battery in
 */
 
-#define PIN_BUZZER_OUT    8
+
+#define PIN_SIGNAL_BRAVO   2
+#define PIN_LED            3
+#define PIN_SIGNAL_ALFA    4
+#define PIN_SIGNAL_CHARLIE 5
+#define PIN_SIGNAL_DELTA   6
+#define PIN_SIGNAL_ECHO    7
+#define PIN_SIGNAL_FOXTROT 8
 #define PIN_RF24_CE       9
 #define PIN_RF24_CNS     10
 #define PIN_RF24_MOSI    11
 #define PIN_RF24_MISO    12
 #define PIN_RF24_SCK     13
-#define PIN_BATTERY_IN   A0
+#define PIN_BATTERY_IN   A7
 
 
 static configData_t ourConfig;
@@ -55,10 +50,17 @@ unsigned long ourSecond = 0;
 
 F3XRemoteCommand ourRemoteCmd;
 unsigned long ourTimedReset = 0;
+unsigned long ourTimedResponse = 0;
 uint16_t ourBatteryVoltage=0;
 uint16_t ourBatteryVoltageRaw=0;
 
+
+Bounce2::Button* ourSignalButtons[6];
+Bounce2::Button ourSignalButton = Bounce2::Button();
+
 void(* resetFunc) (void) = 0;  //declare reset function at address 0
+
+uint8_t ourSignalBCounter=0;
 
 void saveConfig() {
   logMsg(INFO, F("saving config to EEPROM "));   
@@ -104,7 +106,7 @@ void setupConfig() {
 }
 
 void setupRF() {
-  ourRadio.begin(2);
+  ourRadio.begin(RFTransceiver::F3XBLineController);
   logMsg(INFO, F("setup for RCTTransceiver/nRF24L01 successful "));   
 }
 
@@ -117,7 +119,7 @@ void  setupBatteryIn() {
   pinMode(PIN_BATTERY_IN, INPUT);
 }
 
-PinManager ourBuzzer(PIN_BUZZER_OUT);
+PinManager ourLED(PIN_LED);
 
 void updateBatteryIn(unsigned long aNow) {
   static unsigned long last = 0;
@@ -130,18 +132,49 @@ void updateBatteryIn(unsigned long aNow) {
     last = aNow + BAT_IN_CYCLE;
     ourBatteryVoltageRaw = analogRead(PIN_BATTERY_IN);
     // Arduino Nano 5V can read 5V on analog in
-    ourBatteryVoltage=((float) ourBatteryVoltageRaw)/1024.0*V_REF*2.0f*ourConfig.batCalibration;
+    ourBatteryVoltage=((float) ourBatteryVoltageRaw)/1024.0*V_REF*ourConfig.batCalibration;
   
     logMsg(INFO, String(F("battery voltage: ")) + String(ourBatteryVoltage) + String("/") + String(ourBatteryVoltageRaw));
+    
+    // logMsg(INFO, "sending TESTEST  SignalB");
+    // if (!ourRadio.transmit(ourRemoteCmd.createCommand(F3XRemoteCommandType::SignalB, String(ourSignalBCounter))->c_str(), 5)) {
+    //   logMsg(ERROR, String(F("Test Signal was NOT send: ")));
+    // }
+
   } 
 
 }
 #endif
 
+void setupSignallingButton() {
+  // BUTTON SETUP 
+  // INPUT_PULLUP for bare ourSignalButton connected from GND to input pin
+  ourSignalButtons[0] = new Bounce2::Button();
+  ourSignalButtons[0]->attach(PIN_SIGNAL_ALFA, INPUT_PULLUP );
+  ourSignalButtons[1] = new Bounce2::Button();
+  ourSignalButtons[1]->attach(PIN_SIGNAL_BRAVO, INPUT_PULLUP );
+  ourSignalButtons[2] = new Bounce2::Button();
+  ourSignalButtons[2]->attach(PIN_SIGNAL_CHARLIE, INPUT_PULLUP );
+  ourSignalButtons[3] = new Bounce2::Button();
+  ourSignalButtons[3]->attach(PIN_SIGNAL_DELTA, INPUT_PULLUP );
+  ourSignalButtons[4] = new Bounce2::Button();
+  ourSignalButtons[4]->attach(PIN_SIGNAL_ECHO, INPUT_PULLUP );
+  ourSignalButtons[5] = new Bounce2::Button();
+  ourSignalButtons[5]->attach(PIN_SIGNAL_FOXTROT, INPUT_PULLUP );
+
+  for (int i=0; i<6; i++) {
+    // DEBOUNCE INTERVAL IN MILLISECONDS
+    ourSignalButtons[i]->interval(10);
+    // INDICATE THAT THE LOW STATE CORRESPONDS TO PHYSICALLY PRESSING THE BUTTON
+    ourSignalButtons[i]->setPressedState(LOW); 
+  }
+}
+  
 void setupLog(const char* aName) {
   Logger::getInstance().setup(aName);
   Logger::getInstance().doSerialLogging(true);
   Logger::getInstance().setLogLevel(LOG_MOD_ALL, DEBUG);
+  Logger::getInstance().setLogLevel(LOG_MOD_RADIO, DEBUG);
 }
 
 void setup() {
@@ -150,10 +183,11 @@ void setup() {
   while (!Serial) delay(10); // wait for serial monitor
   delay(1000);
   Serial.println();
+  Serial.println("BRemoteSignalling");
 
   setupLog(myName);
 
-  logMsg(INFO, String(F("RadioBuzzer: ")) + String(APP_VERSION));
+  logMsg(INFO, String(F("B-Line Remote Signalling: ")) + String(APP_VERSION));
  
   setupConfig();
 
@@ -168,9 +202,30 @@ void setup() {
 
   setupRF();
   ourRemoteCmd.begin();
-  ourBuzzer.pattern(5, 100,50,100,50,500);
+
+  setupSignallingButton();
+  
+  // all ok
+  ourLED.pattern(7,100,100,100,100,100,100,100);
 }
 
+
+void handleButtonEvents(unsigned long aNow) { 
+  for (int i=0; i<6; i++) {
+    // DEBOUNCE INTERVAL IN MILLISECONDS
+    ourSignalButtons[i]->update();
+  }
+
+  for (int i=0; i<6; i++) {
+    if ( ourSignalButtons[i]->pressed() ) {
+      logMsg(INFO, "SignalButton pressed :" + String(++ourSignalBCounter));
+    
+      logMsg(INFO, "sending SignalB");
+      ourRadio.transmit(ourRemoteCmd.createCommand(F3XRemoteCommandType::SignalB, String(ourSignalBCounter))->c_str(), 5);
+      ourLED.on(400);
+    }
+  }
+}
 
 void updateRadio(unsigned long aNow) { 
   while (ourRadio.available()) { 
@@ -185,13 +240,6 @@ void updateRadio(unsigned long aNow) {
     int8_t radioDatarate;
     boolean radioAck;
     switch (ourRemoteCmd.getType()) {
-      case F3XRemoteCommandType::RemoteSignalBuzz:
-        {
-          int duration=ourRemoteCmd.getArg(0)->toInt();
-          LOGGY(INFO, String("received RemoteSignalBuzz:") + String(duration));
-          ourBuzzer.on(duration);
-        }
-        break;
       case F3XRemoteCommandType::CmdSetRadio:
         radioPower=ourRemoteCmd.getArg(0)->toInt();
         radioChannel=ourRemoteCmd.getArg(1)->toInt();
@@ -204,13 +252,14 @@ void updateRadio(unsigned long aNow) {
         ourRadio.setAck(radioAck);
 
 
-        logMsg(INFO, String("received CmdSetPower: power: ") + String(radioPower));
-        logMsg(INFO, String("received CmdSetPower: channel: ") + String(radioChannel));
-        logMsg(INFO, String("received CmdSetPower: datarate: ") + String(radioDatarate));
-        logMsg(INFO, String("received CmdSetPower: ack: ") + String(radioAck));
-        logMsg(INFO, String("received CmdSetPower: power,chan,rate,ack: ") + *ourRemoteCmd.getArg());
+        logMsg(INFO, String(F("received CmdSetPower: power: ")) + String(radioPower));
+        logMsg(INFO, String(F("received CmdSetPower: channel: ")) + String(radioChannel));
+        logMsg(INFO, String(F("received CmdSetPower: datarate: ")) + String(radioDatarate));
+        logMsg(INFO, String(F("received CmdSetPower: ack: ")) + String(radioAck));
+        logMsg(INFO, String(F("received CmdSetPower: power,chan,rate,ack: ")) + *ourRemoteCmd.getArg());
         break;
       case F3XRemoteCommandType::CmdRestartMC:
+        logMsg(INFO, String(F("received CmdRestartMC: ack: ")) + String(radioAck));
         ourTimedReset = aNow + 500; // reset in 500ms
         break;
       case F3XRemoteCommandType::CmdCycleTestRequest:
@@ -227,15 +276,12 @@ void updateRadio(unsigned long aNow) {
           }
         }
         break;
-      case F3XRemoteCommandType::RemoteSignalStateReq:
+      case F3XRemoteCommandType::BLineStateReq:
         {
         // String* arg = ourRemoteCmd.getArg();
-        LOGGY(INFO, String("received RemoteSignalStateReq:"));
-          boolean sendSuccess;
-          sendSuccess = ourRadio.transmit(*ourRemoteCmd.createCommand(F3XRemoteCommandType::RemoteSignalStateResp, String(ourBatteryVoltageRaw)), 5);
-          if (!sendSuccess) {
-            logMsg(INFO, String(F("sending RemoteSignalStateResp not successsfull. Retransmissions: ")) + String(ourRadio.getRetransmissionCount()));
-          }
+        LOGGY(INFO, String("received BLineStateReq:"));
+          ourTimedResponse = 1; // respond immediately
+          ourTimedResponse = aNow + 100;
         }
         break;
       default:
@@ -246,7 +292,7 @@ void updateRadio(unsigned long aNow) {
   }
 
   static unsigned long last = 0;
-  #define SHOW_SETTING_CYCLE 60000
+  #define SHOW_SETTING_CYCLE 10000
 
   if (aNow > last) {
     last = aNow + SHOW_SETTING_CYCLE;
@@ -262,13 +308,24 @@ void updateTimedEvents(unsigned long aNow) {
      ourTimedReset = 0;
      resetFunc();
   }
+  if (ourTimedResponse != 0 && aNow > ourTimedResponse) {
+     ourTimedResponse = 0;
+     boolean sendSuccess;
+     sendSuccess = ourRadio.transmit(*ourRemoteCmd.createCommand(F3XRemoteCommandType::BLineStateResp, String(ourBatteryVoltageRaw)), 5);
+     if (!sendSuccess) {
+       logMsg(INFO, String(F("sending BLineStateResp not successsfull. Retransmissions: ")) + String(ourRadio.getRetransmissionCount()));
+     } else {
+       logMsg(INFO, String(F("sending BLineStateResp successsfull. Retransmissions: ")) + String(ourRadio.getRetransmissionCount()));
+     }
+  }
 }
 
 void loop() {
   unsigned long now = millis();
+  handleButtonEvents(now);
   updateRadio(now);
-  ourBuzzer.update(now);
   updateBatteryIn(now);
+  ourLED.update(now);
   updateTimedEvents(now);
 
   static unsigned long next_sec = 0;
@@ -278,5 +335,9 @@ void loop() {
     next_sec = now + 1000;
   } else {
     return;
+  }
+  
+  if (ourSecond%15 == 0) {
+    ourLED.on(100);
   }
 }

@@ -1,5 +1,5 @@
 /**
- * \file ABaseManager.ino
+ * \file BaseManager.ino
  *
  * \brief tool support trainings data measurement  
  *
@@ -34,7 +34,7 @@
 
 #define USE_RXTX_AS_GPIO  // for usage of rotary encoder instead of Serial
 
-#define APP_VERSION "V034"
+#define APP_VERSION "V035"
 
 /*
 Version History
@@ -52,15 +52,20 @@ Version History
  V032 31.07.2024: RS : F3F Task added, Logger refactored, TaskData handling generalized, address schema of RFTransceiver fixed.
  V033 01.08.2024: RS : Support for F3X Loop Task, finalizing the course will start frame time of next starter automatically
  V034 02.08.2024: RS : nRF24 address scheme modified to support old versions of remote devices 
+ V035 19.08.2024: RS : bugfix: buzzer settings not saved, added missing F3F A-Line flyover signal,  long 1.5s finish signals F3F+F3B, 
+                       interpreation of F3F Tasktime is now: time between StartTaskSignal and launch time,
+                       more precise naming of entities/files: BaseManager, LineController  
 */
 
 /**
 Feature list:
 * Battery warning
+* F3B Speed, F3F Task
+*
 * ...
 */
 
-static const char myName[] = "A-Base";
+static const char myName[] = "BaseM";
 static const char MYSEP_STR[] = "~~~";
 static const char CMDSEP_STR[] = ",";
 
@@ -102,6 +107,9 @@ D10/TX : KY-040 Encoder - CLK
 #ifdef NOBUZZ
 #pragma message ("BUZZER IS OFF !!!!!!!!!!!")
 #endif
+#define BUZZ_TIME_LONG   1500 // course finised
+#define BUZZ_TIME_NORMAL  500 // normal turn
+#define BUZZ_TIME_SHORT    100 // user info
 
 #include <RFTransceiver.h>
 RFTransceiver ourRadio(myName, PIN_RF24_CE, PIN_RF24_CNS); // (CE, CSN)
@@ -125,13 +133,12 @@ static unsigned long ourLoopF3XPrevCourseTime = 0L;
 
 enum BuzzerSetting {
   BS_ALL = 0, // both buzzers are active 
-  BS_ALINE, // only direct connected A-Line Buzzer 
-  BS_RADIOBUZZER, // only remote radio buzzer
+  BS_BASEMANAGER, // only direct connected BaseManager Buzzer 
+  BS_REMOTE_BUZZER, // only remote radio buzzer
   BS_NONE, // no buzzers are active 
   BS_LAST,
 };
 
-static BuzzerSetting ourBuzzerSetting = BS_RADIOBUZZER;
 static boolean ourIsTimeCriticalOperationRunning = false;
 
 enum ToolContext {
@@ -384,15 +391,15 @@ void radioBuzzer(uint16_t aDura) {
 
 void signalBuzzing(uint16_t aDuration) {
   logMsg(LOG_MOD_SIG, INFO, "ABM: signalBuzzing: " + String(aDuration));
-  switch (ourBuzzerSetting) {
+  switch (ourConfig.buzzerSetting) {
     case BS_ALL: // both buzzers are active 
       radioBuzzer(aDuration);
       ourBuzzer.on(aDuration);
       break;
-    case BS_ALINE: // only direct connected A-Line Buzzer 
+    case BS_BASEMANAGER: // only direct connected BaseManager Buzzer 
       ourBuzzer.on(aDuration);
       break;
-    case BS_RADIOBUZZER: // only remote radio buzzer
+    case BS_REMOTE_BUZZER: // only remote radio buzzer
       radioBuzzer(aDuration);
       break;
     case BS_NONE: // no buzzers are active 
@@ -402,14 +409,24 @@ void signalBuzzing(uint16_t aDuration) {
 
 void signalAListener() {
   logMsg(LOG_MOD_SIG, INFO, "ABM: signalAListener");
-  signalBuzzing(500);
-  switch(ourContext.get()) {
-    case TC_F3BSpeedTask:
+  if (ourF3XGenericTask->getTaskState() == F3XFixedDistanceTask::TaskFinished) {
+    // looong signal at final A-Line overfly signalling 1500ms
+    signalBuzzing(BUZZ_TIME_LONG);
+    if (ourF3XGenericTask->getLoopTasksEnabled()) {
+      ourF3XGenericTask->stop();
+      ourF3XGenericTask->start();
+    }
+  } else {
+    // default signalling 500ms
+    signalBuzzing(BUZZ_TIME_NORMAL);
+  }
+  switch(ourF3XGenericTask->getType()) {
+    case F3XFixedDistanceTask::F3BSpeedType:
       if (ourF3XGenericTask->getTaskState() == F3XFixedDistanceTask::TaskFinished) {
         ourF3BTaskData.writeData();
       }
       break;
-    case TC_F3FTask:
+    case F3XFixedDistanceTask::F3FType:
       if (ourF3XGenericTask->getTaskState() == F3XFixedDistanceTask::TaskFinished) {
         ourF3FTaskData.writeData();
       }
@@ -419,7 +436,7 @@ void signalAListener() {
 
 void signalBListener() {
   logMsg(LOG_MOD_SIG, INFO, "signalBListener");
-  signalBuzzing(500);
+  signalBuzzing(BUZZ_TIME_NORMAL);
 }
 
 /**
@@ -479,14 +496,14 @@ void setupOLED() {
 
 void setupRadio() {
   logMsg(INFO, F("setup RCTTransceiver/nRF24L01")); 
-  ourRadio.begin(RFTransceiver::F3XBaseManager);  // set 0 for A-Line-Manager
+  ourRadio.begin(RFTransceiver::F3XBaseManager);  // set 0 for BaseManager
   logMsg(INFO, F("setup for RCTTransceiver/nRF24L01 successful")); 
 
   // in the RFTransceiver implementation the default values for the radio settings are defined 
   // for A- and B-Line Manager (Channel:110/Power:HIGH/Datarate:RF24_250KBPS/Ack:true)
   // if the user is changing radio settings, they are save in the EEPROM config ourConfig/loadConfig/saveConfig
   // at startup, these config value are NOT used, to provide in any case a commont radio setting for both sides.
-  // Only the A-Line-Manager, stores changed radio settings, boots with the default settings starts a communication with the 
+  // Only the BaseManager, stores changed radio settings, boots with the default settings starts a communication with the 
   // B-Line-Manager and sends changed settings via radio  
 
   ourRadioPower=ourRadio.getPower();
@@ -674,7 +691,6 @@ void setWebDataReq() {
     ourLoopF3XTask = true;
     ourF3XGenericTask->setLoopTasksEnabled(ourLoopF3XTask);
     ourF3XGenericTask->start();
-    signalBuzzing(500);
   } else 
   if (name == F("start_rt_measurement")) {
     logMsg(DEBUG, F("start_rt_measurement"));
@@ -701,19 +717,18 @@ void setWebDataReq() {
   } else 
   if (name == F("buzzer_setting")) {
     if (value == "all") {
-      ourBuzzerSetting = BS_ALL;
+      ourConfig.buzzerSetting = BS_ALL;
     } else
     if (value == "aline") {
-      ourBuzzerSetting = BS_ALINE;
+      ourConfig.buzzerSetting = BS_BASEMANAGER;
     } else
     if (value == "radiobuzzer") {
-      ourBuzzerSetting = BS_RADIOBUZZER;
+      ourConfig.buzzerSetting = BS_REMOTE_BUZZER;
     } else
     if (value == "none") {
-      ourBuzzerSetting = BS_NONE;
+      ourConfig.buzzerSetting = BS_NONE;
     } else
     ourRadioSendSettings=true;
-    ourConfig.buzzerSetting = ourBuzzerSetting;
     logMsg(LOG_MOD_SIG, INFO, F("set buzzerSetting:") + String(ourConfig.buzzerSetting));
   } else 
   if (name == F("competition_setup")) {
@@ -894,7 +909,7 @@ void getF3FWebData(String* aReturnString, boolean aForce=false) {
         break;
       case F3XFixedDistanceTask::TaskRunning:
         switch (ourF3XGenericTask->getSignalledLegCount()) {
-          case F3X_COURSE_NOT_STARTED:
+          case F3X_COURSE_INIT:
             taskstr = F("launch signal awaiting ...");
             break;
           case F3X_IN_AIR:
@@ -1007,8 +1022,8 @@ void getF3BSpeedWebData(String* aReturnString, boolean aForce=false) {
   if (ourF3XGenericTask->getTaskState() == F3XFixedDistanceTask::TaskRunning || ourF3XGenericTask->getTaskState() == F3XFixedDistanceTask::TaskFinished ) {
     // logMsg(DEBUG, F("getF3BSpeedWebData: running | finished")); 
     switch(ourF3XGenericTask->getSignalledLegCount()) {
-      case F3X_COURSE_NOT_STARTED:
-        // logMsg(DEBUG, F("getF3BSpeedWebData: --> F3X_COURSE_NOT_STARTED")); 
+      case F3X_COURSE_INIT:
+        // logMsg(DEBUG, F("getF3BSpeedWebData: --> F3X_COURSE_INIT")); 
         // send all timer
         fromTimer=0;
         numTimer = 5;
@@ -1156,14 +1171,14 @@ void getWebDataReq() {
     } else
     if (argName.equals(F("id_buzzer_setting"))) {
       String setting;
-      switch (ourBuzzerSetting) {
+      switch (ourConfig.buzzerSetting) {
         case BS_ALL: // both buzzers are active 
           setting=F("all");
           break;
-        case BS_ALINE: // only direct connected A-Line Buzzer 
+        case BS_BASEMANAGER: // only direct connected BaseManager Buzzer 
           setting=F("aline");
           break;
-        case BS_RADIOBUZZER: // only remote radio buzzer
+        case BS_REMOTE_BUZZER: // only remote radio buzzer
           setting=F("radiobuzzer");
           break;
         case BS_NONE: // no buzzers are active 
@@ -1431,27 +1446,31 @@ void setupRemoteCmd() {
   ourRemoteCmd.begin();
 }
 
-void f3fInAirListener() {
-  logMsg(LOG_MOD_SIG, INFO, "inAirListener");
-  signalBuzzing(100);
+/**
+ * this function will be call by the F3F Task object, to indicate
+ * notifiable time proceedings
+*/
+void f3fTimeProceedingListener() {
+  logMsg(LOG_MOD_SIG, INFO, F("Time Proceeding Notification"));
+  signalBuzzing(BUZZ_TIME_SHORT);
 }
 
 void taskStateListener(F3XFixedDistanceTask::State aState) {
   switch(aState) {
     case F3XFixedDistanceTask::TaskRunning:
       ourIsTimeCriticalOperationRunning = true;
+      signalBuzzing(BUZZ_TIME_NORMAL);
+      break;
+    case F3XFixedDistanceTask::TaskWaiting:
+      ourIsTimeCriticalOperationRunning = false;
       break;
     case F3XFixedDistanceTask::TaskError:
-    case F3XFixedDistanceTask::TaskWaiting:
     case F3XFixedDistanceTask::TaskTimeOverflow:
       ourIsTimeCriticalOperationRunning = false;
+      signalBuzzing(BUZZ_TIME_LONG);
       break;
     case F3XFixedDistanceTask::TaskFinished:
       ourIsTimeCriticalOperationRunning = false;
-      if (ourF3XGenericTask->getLoopTasksEnabled()) {
-        ourF3XGenericTask->stop();
-        ourF3XGenericTask->start();
-      }
       break;
     case F3XFixedDistanceTask::TaskNotSet:
       ourIsTimeCriticalOperationRunning = false;
@@ -1471,7 +1490,7 @@ void setupF3XTasks() {
   ourF3FTask.addSignalAListener(signalAListener);
   ourF3FTask.addSignalBListener(signalBListener);
   ourF3FTask.addStateChangeListener(taskStateListener);
-  ourF3FTask.addInAirIndicationListener(f3fInAirListener);
+  ourF3FTask.addTimeProceedingListener(f3fTimeProceedingListener);
   ourF3FTask.setTasktime(ourConfig.f3fTasktime);
   ourF3FTask.setLegLength(ourConfig.f3fLegLength);
   ourF3FTaskData.init();
@@ -1562,9 +1581,9 @@ void setDefaultConfig() {
   ourConfig.radioChannel = 110;
   ourConfig.radioPower = RF24_PA_HIGH;
   ourConfig.f3bSpeedTasktime = 150;
-  ourConfig.f3fTasktime = 180;
+  ourConfig.f3fTasktime = 30;
   ourConfig.f3fLegLength = 100;
-  ourConfig.buzzerSetting = (uint8_t) BS_RADIOBUZZER;
+  ourConfig.buzzerSetting = (uint8_t) BS_REMOTE_BUZZER;
   ourConfig.competitionSetting = false;
 }
 
@@ -1635,7 +1654,7 @@ void setupConfig() {
   yield();
   delay(1100);
   if (ourConfig.f3fTasktime < 0 || ourConfig.f3fTasktime > 300) {
-    ourConfig.f3fTasktime = 180;
+    ourConfig.f3fTasktime = 30;
   }
   cfg = F("Cfg: F3F ttime :");
   cfg.concat(String(ourConfig.f3fTasktime));
@@ -1644,9 +1663,8 @@ void setupConfig() {
   yield();
   delay(1100);
   if (ourConfig.buzzerSetting < 0 || ourConfig.buzzerSetting >= (uint8_t) BS_LAST) {
-    ourConfig.buzzerSetting = (uint8_t) BS_RADIOBUZZER;
+    ourConfig.buzzerSetting = (uint8_t) BS_REMOTE_BUZZER;
   }
-  ourBuzzerSetting = (BuzzerSetting) ourConfig.buzzerSetting;
   yield();
   delay(1100);
 } 
@@ -1806,7 +1824,7 @@ void updateRadio(unsigned long aNow) {
     // 1,83,0,1;
     
     if (ourRadio.transmit(ourRemoteCmd.createCommand(F3XRemoteCommandType::CmdSetRadio, settings)->c_str(), 20) ) {
-      // changed radio settings are successfully transmitted to B-Line, now the A-Line can also be switched
+      // changed radio settings are successfully transmitted to B-Line, now the BaseManager can also be switched
       ourRadio.setWritingPipe(2);
       ourRadio.transmit(ourRemoteCmd.createCommand(F3XRemoteCommandType::CmdSetRadio, settings)->c_str(), 20);
       ourRadio.setWritingPipe(0);
@@ -2089,6 +2107,7 @@ void showF3FTask() {
   unsigned long courseTime = ourF3XGenericTask->getCourseTime(F3X_GFT_RUNNING_TIME);
   
 
+  String msgStr;
   String courseTimeStr;
   String taskTime;
   courseTimeStr = getSCTimeStr(0UL, true);
@@ -2104,11 +2123,14 @@ void showF3FTask() {
           stateInfo= ourF3XGenericTask->getSignalledLegCount() +'0';
         }
         switch (ourF3XGenericTask->getSignalledLegCount()) {
-          case F3X_COURSE_NOT_STARTED:
-            info=F("next:A:in air");
+          case F3X_COURSE_INIT:
+            info=F("next:A:lauch");
             break;
           case F3X_IN_AIR:
-            info=F("next:A: enter course");
+            info=F("next:A:A rev. cross");
+            break;
+          case F3X_IN_AIR_A_REV_CROSSING:
+            info=F("next:A: in course");
             break;
           default:
             if (ourF3XGenericTask->getSignalledLegCount()%2 == 0) {
@@ -2125,13 +2147,16 @@ void showF3FTask() {
         break;
       case F3XFixedDistanceTask::TaskWaiting:
         stateInfo='W';
+        msgStr = F("Please start task...");
         info=F("P:Start Tasktime");
         break;
       case F3XFixedDistanceTask::TaskTimeOverflow:
+        msgStr = F("TaskTime exceeded!!!");
         stateInfo='O';
         info=F("PP:Reset");
         break;
       case F3XFixedDistanceTask::TaskError:
+        msgStr = F("Internal ERROR");
         stateInfo='E';
         break;
       case F3XFixedDistanceTask::TaskFinished:
@@ -2167,12 +2192,12 @@ void showF3FTask() {
     ourOLED.print(F("]"));
     
     switch (ourF3FTask.getTaskState()) {
-      case F3XFixedDistanceTask::TaskWaiting:
+      // case F3XFixedDistanceTask::TaskWaiting:
       case F3XFixedDistanceTask::TaskRunning:
         ourOLED.setFont(oledFontNormal);
         ourOLED.setCursor(10, 27);
         ourOLED.print(F("Task Time: "));
-        ourOLED.print(F3XFixedDistanceTask::getHMSTimeStr(ourF3FTask.getRemainingTasktime(), true));
+        ourOLED.print(F3XFixedDistanceTask::getHMSTimeStr(ourF3XGenericTask->getRemainingTasktime(), true));
         ourOLED.setCursor(10, 37);
         ourOLED.print(F("in air: "));
         ourOLED.print(F3XFixedDistanceTask::getHMSTimeStr(ourF3XGenericTask->getInAirTime(), true));
@@ -2225,6 +2250,13 @@ void showF3FTask() {
         ourOLED.print(F(") "));
         ourOLED.print(getLegTimeStr(leg.time, leg.deadTime, leg.deadDistance));
         break;
+      case F3XFixedDistanceTask::TaskWaiting:
+      case F3XFixedDistanceTask::TaskTimeOverflow:
+      case F3XFixedDistanceTask::TaskError:
+        ourOLED.setFont(oledFontBig);
+        ourOLED.setCursor(0, 27);
+        ourOLED.print(msgStr);
+        break;
     }
   // }
 }
@@ -2234,6 +2266,7 @@ void showF3BSpeedTask() {
   
 
   String courseTimeStr;
+  String msgStr;
   String taskTime;
   String legTimeStr[4];
   // courseTimeStr = ourF3XGenericTask->getLegTimeString(F3X_TIME_NOT_SET, F3X_TIME_NOT_SET, 0, 0, 0,'/', false, true);
@@ -2250,7 +2283,7 @@ void showF3BSpeedTask() {
           stateInfo = '0' + ourF3XGenericTask->getSignalledLegCount();
         }
         switch (ourF3XGenericTask->getSignalledLegCount()) {
-          case F3X_COURSE_NOT_STARTED:
+          case F3X_COURSE_INIT:
             info=F("next:A: enter course");
             break;
           case 0: // A-line crossed 1.time = 0m
@@ -2272,13 +2305,16 @@ void showF3BSpeedTask() {
         break;
       case F3XFixedDistanceTask::TaskWaiting:
         stateInfo='W';
+        msgStr = F("Please start task...");
         info=F("P:Start Tasktime");
         break;
       case F3XFixedDistanceTask::TaskTimeOverflow:
         stateInfo='O';
+        msgStr = F("TaskTime exceeded");
         info=F("PP:Reset");
         break;
       case F3XFixedDistanceTask::TaskError:
+        msgStr = F("internal ERROR!");
         stateInfo='E';
         break;
       case F3XFixedDistanceTask::TaskFinished:
@@ -2313,6 +2349,12 @@ void showF3BSpeedTask() {
     
     switch (ourF3XGenericTask->getTaskState()) {
       case F3XFixedDistanceTask::TaskWaiting:
+      case F3XFixedDistanceTask::TaskError:
+      case F3XFixedDistanceTask::TaskTimeOverflow:
+        ourOLED.setFont(oledFontBig);
+        ourOLED.setCursor(0, 27);
+        ourOLED.print(msgStr);
+        break;
       case F3XFixedDistanceTask::TaskRunning:
         ourOLED.setFont(oledFontNormal);
         ourOLED.setCursor(10, 27);
@@ -2505,7 +2547,7 @@ void updateBatterySupervision(unsigned long aNow) {
       battWarn = true;
     }
     if (battWarn && ourF3XGenericTask->getTaskState() == F3XFixedDistanceTask::TaskWaiting) {
-      ourBuzzer.pattern(5,50,30,200,30,50);
+      ourBuzzer.pattern(5,50,100,50,100,50);
     }
   }
 }
@@ -2584,9 +2626,6 @@ void updatePushButton(unsigned long aNow) {
           case F3XFixedDistanceTask::TaskTimeOverflow:
             ourF3XGenericTask->stop();
             logMsg(INFO, F("resetting task:"));
-            #ifdef USE_RXTX_AS_GPIO
-            resetRotaryEncoder();
-            #endif
             
             switch(ourContext.get()) {
               case TC_F3BSpeedTask: // button press
@@ -2712,20 +2751,20 @@ void updatePushButton(unsigned long aNow) {
         switch (menuPos) {  // !! use the right size here !!
           case 0: // "0:Start Task";
             logMsg(LOG_MOD_TASK, INFO, F("starting task: F3BSpeedTask"));
+            ourLoopF3XTask = false;
+            ourF3XGenericTask->setLoopTasksEnabled(ourLoopF3XTask);
             ourContext.set(TC_F3BSpeedTask);
             ourF3XGenericTask->start();
-            signalBuzzing(500);
             CLEAR_HISTORY;
             break;
           case 1: // "1:Loop Task";
             logMsg(INFO, F("looping task: F3BSpeedTask"));
             // ourContext.set(TC_F3XMessage);
             // ourContext.setInfo(String(F("not yet implemented")));
-            ourLoopF3XTask = true;
             ourContext.set(TC_F3BSpeedTask);
+            ourLoopF3XTask = true;
             ourF3XGenericTask->setLoopTasksEnabled(ourLoopF3XTask);
             ourF3XGenericTask->start();
-            signalBuzzing(500);
             CLEAR_HISTORY;
             break;
           case 2: // "2:Back"
@@ -2746,21 +2785,17 @@ void updatePushButton(unsigned long aNow) {
           case 0: // "0:Start Task";
             logMsg(INFO, F("starting task: F3FTask"));
             ourLoopF3XTask = false;
-            ourContext.set(TC_F3FTask);
             ourF3XGenericTask->setLoopTasksEnabled(ourLoopF3XTask);
+            ourContext.set(TC_F3FTask);
             ourF3XGenericTask->start();
-            signalBuzzing(500);
             CLEAR_HISTORY;
             break;
           case 1: // "1:Loop Task";
-            // ourContext.set(TC_F3XMessage);
-            // ourContext.setInfo(String(F("not yet implemented")));
             logMsg(INFO, F("looping task: F3FTask"));
             ourLoopF3XTask = true;
-            ourContext.set(TC_F3FTask);
             ourF3XGenericTask->setLoopTasksEnabled(ourLoopF3XTask);
+            ourContext.set(TC_F3FTask);
             ourF3XGenericTask->start();
-            signalBuzzing(500);
             CLEAR_HISTORY;
             break;
           case 2: // "2:Back"
@@ -2800,19 +2835,23 @@ void updatePushButton(unsigned long aNow) {
             break;
           case 3: // "3:Buzzers setup";
             {
-            uint8_t t = (uint8_t) ourBuzzerSetting;
-            t++;
-            ourBuzzerSetting = (BuzzerSetting) (t % (uint8_t) BS_LAST);
-            switch (ourBuzzerSetting) {
+            uint8_t t = (uint8_t) ourConfig.buzzerSetting;
+            if (ourDialogTimer > aNow) {
+              // switch to the next setting value only if the button
+              // is pressend more than once within the dialog time range
+              t++;
+            }
+            ourConfig.buzzerSetting = (BuzzerSetting) (t % (uint8_t) BS_LAST);
+            switch (ourConfig.buzzerSetting) {
               case BS_ALL: // both buzzers are active 
                 ourBuzzer.enable();
                 showDialog(2000, String(F("all buzzers")));
                 break;
-              case BS_ALINE: // only direct connected A-Line Buzzer 
+              case BS_BASEMANAGER: // only direct connected BaseManager Buzzer 
                 ourBuzzer.enable();
                 showDialog(2000, String(F("only A-Line")));
                 break;
-              case BS_RADIOBUZZER: // only remote radio buzzer
+              case BS_REMOTE_BUZZER: // only remote radio buzzer
                 ourBuzzer.disable();
                 showDialog(2000, String(F("only radio")));
                 break;
@@ -2821,7 +2860,7 @@ void updatePushButton(unsigned long aNow) {
                 showDialog(2000, String(F("no buzzers")));
                 break;
             }
-
+            logMsg(LOG_MOD_SIG, INFO, F("set buzzerSetting:") + String(ourConfig.buzzerSetting));
             ourBuzzer.on(PinManager::SHORT);
             }
             break;
@@ -2930,6 +2969,7 @@ void updatePushButton(unsigned long aNow) {
             case TC_F3BSpeedTask:
             case TC_F3FTask:
               ourF3XGenericTask->stop();
+              signalBuzzing(BUZZ_TIME_LONG);
               #ifdef USE_RXTX_AS_GPIO
               resetRotaryEncoder(0);
               controlRotaryEncoder(true);
